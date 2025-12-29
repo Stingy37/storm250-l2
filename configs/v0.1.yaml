@@ -1,0 +1,68 @@
+# supplies "arguments" for a certain dataset pipeline run, overriding default values provided by DEFAULT_CONFIG in configs.py
+
+
+schema_version: "0.1"
+
+# EBS mount mirror root (replaces /content/drive/MyDrive/... on Colab)
+root_dir: "/data/Storm250"
+
+# If true, config.py will mkdir -p root_dir and all directories in paths
+ensure_dirs: true
+
+paths:
+  # GR-S tracks 
+  grs_raw_dir: "Datasets/cell_tracks/raw_grs"
+  grs_processed_dir: "Datasets/cell_tracks/processed_grs"
+  grs_linked_dir: "Datasets/cell_tracks/linked_grs"
+
+  # NEXRAD caching / local raw (optional) 
+  nexrad_lv2_cache_dir: "Datasets/nexrad_datasets/level_two_raw"
+  nexrad_lv3_cache_dir: "Datasets/nexrad_datasets/level_three_raw"
+
+  # Surface obs (optional) 
+  lsr_raw_dir: "Datasets/surface_obs_datasets/lsr_raw"
+  lsr_reports_dir: "Datasets/surface_obs_datasets/lsr_reports"
+  spc_reports_dir: "Datasets/surface_obs_datasets/spc_reports"
+  linked_obs_cache_dir: "Datasets/surface_obs_datasets/linked_obs_cache"
+
+  # Scratch 
+  temp_dir: "Datasets/temp"
+
+  # Final dataset outputs 
+  dataset_out_dir: "Datasets/training_datasets/level_two"
+  starter_out_dir: "Datasets/training_datasets/starter"
+
+  # Packaging / release 
+  zenodo_bundle_dir: "Datasets/training_datasets/zenodo_bundle"
+  release_zenodo_dir: "Release/zenodo"
+
+  # Logs 
+  logs_dir: "Logs"
+  plots_dir: "Logs/plots"
+  env_dir: "Logs/environment"
+
+build:
+  # Dataset definition knobs
+  max_range_km: 250.0
+  time_tolerance_s: 29
+  min_track_samples: 60
+  max_gap_hours: 6
+  reflectivity_dbz_thresh: 20.0
+  buffer_km: 5.0
+
+  # Execution knobs
+  skip_existing: true
+  resume: true
+  dry_run: false
+
+  use_multiprocessing: true
+  n_workers: 8
+
+aws:
+  nexrad_bucket: "noaa-nexrad-level2"
+  s3_anon: true
+  aws_region: null
+  retries: 5
+
+logging:
+  level: "INFO"

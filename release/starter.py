@@ -87,7 +87,7 @@ def _copy_site_tree(src_site_dir: Path, dst_site_dir: Path, skip_names: set, ski
     return (n_files, total_bytes)
 
 # -------------------------- main builder --------------------------
-def build_hrss_starter(
+def build_dataset_starter(
     src_base: str = "/content/drive/MyDrive/Datasets/training_datasets/level_two",
     dst_base: str = "/content/drive/MyDrive/Datasets/training_datasets/starter",
     years: Iterable[str] = ("2017",),
@@ -203,7 +203,7 @@ def build_hrss_starter(
 
 
 # -------------------------- run it (edit args if desired) --------------------------
-build_hrss_starter(
+build_dataset_starter(
     src_base="Datasets/training_datasets/level_two",       # where full dataset currently lives
     dst_base="Datasets/training_datasets/starter",         # where the starter subset should be written
     years=("2017",),                                       # which years to include
