@@ -237,7 +237,8 @@ def main_pipeline(debug_flag, year, radar_info, train_rewrite: bool = False, tra
     # Wrap everything in a try-finally block to close plotting queuing / threads when finished
     try:
         ################################################################### LOAD DATASETS ###############################################################################
-
+        #                                    |-- NOTE: We don't actually USE the lsr and spc datasets that we load in here.
+        #                                    \-- For consistency with the preprint, lets leave them out. Should be easy to hook up later, if needed
 
         # Load lsr-iasate reports
         lsr_df = load_raw_lsr(

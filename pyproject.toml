@@ -9,3 +9,8 @@ dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.pytest.ini_options]
+markers = [
+    "network: tests that require network access"
+]

@@ -160,7 +160,7 @@ def test_active_mask_for_chunk_respects_ranges():
     names, lats, lons, ranges = _prepare_site_arrays(radar_info)
 
     # times: Jan 04, Jan 05, Jan 07 (UTC)
-    t = pd.to_datetime(["2017-01-04", "2017-01-05", "2017-01-07"], utc=True).view("int64").to_numpy()
+    t = pd.to_datetime(["2017-01-04", "2017-01-05", "2017-01-07"], utc=True).view("int64").view("int64")
     mask = _active_mask_for_chunk(t, ranges)
 
     # shape [L,S]
