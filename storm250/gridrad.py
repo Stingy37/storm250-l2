@@ -150,8 +150,8 @@ def load_grs_tracks(
     processed_parquet = processed_cache_dir / f"{year}{cache_suffix}.parquet"
     processed_csv = processed_cache_dir / f"{year}{cache_suffix}.csv"
 
-    # Quick processed-cache short-circuit
-    if processed_parquet.exists():
+    # Quick processed-cache short-circuit, where we check for BOTH csv and parquet (regardless if one doesn't exist)
+    if processed_parquet.exists() or processed_csv.exists():
         if debug:
             logger.info("[load_grs_tracks] loading processed cache %s", processed_parquet)
         try:

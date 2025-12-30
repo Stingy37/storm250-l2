@@ -251,7 +251,7 @@ def test_load_grs_tracks_processed_cache_short_circuits(tmp_path, radar_info_sub
         for p in save_dir.glob("*"):
             p.unlink()
 
-    # Second call: give an invalid base_url + tiny timeout.
+    # Second call: give an invalid base_url 
     # If the function doesn't use cache, this should fail.
     df2 = load_grs_tracks(
         year=2017,
@@ -260,12 +260,11 @@ def test_load_grs_tracks_processed_cache_short_circuits(tmp_path, radar_info_sub
         save_dir=save_dir,
         processed_cache_dir=proc_dir,
         base_url="https://example.invalid/does-not-exist",
-        timeout=0.001,
-        max_distance_km=99999.0,
+        max_distance_km=250,
         min_rows=1,
         max_workers=8,
         verify_ssl=False,
-        debug=False,
+        debug=True,
     )
 
     # should be equal, since both dataframes should be the same 
