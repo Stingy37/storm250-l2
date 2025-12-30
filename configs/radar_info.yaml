@@ -1,0 +1,1202 @@
+# stores metadata about radar locations and start / end dates, used when linking gr-s tracks to specific radar site
+#     |- deserialized into a python dictionary later 
+
+KABR:
+  position:
+    lat: 45.455833
+    lon: -98.413333
+  active_ranges:
+    - start: null
+      end: null
+
+KABX:
+  position:
+    lat: 35.149722
+    lon: -106.82388
+  active_ranges:
+    - start: null
+      end: null
+
+KAKQ:
+  position:
+    lat: 36.98405
+    lon: -77.007361
+  active_ranges:
+    - start: null
+      end: null
+
+KAMA:
+  position:
+    lat: 35.233333
+    lon: -101.70927
+  active_ranges:
+    - start: null
+      end: null
+
+KAMX:
+  position:
+    lat: 25.611083
+    lon: -80.412667
+  active_ranges:
+    - start: null
+      end: null
+
+KAPX:
+  position:
+    lat: 44.90635
+    lon: -84.719533
+  active_ranges:
+    - start: null
+      end: null
+
+KARX:
+  position:
+    lat: 43.822778
+    lon: -91.191111
+  active_ranges:
+    - start: null
+      end: null
+
+KATX:
+  position:
+    lat: 48.194611
+    lon: -122.49569
+  active_ranges:
+    - start: null
+      end: null
+
+KBBX:
+  position:
+    lat: 39.495639
+    lon: -121.63161
+  active_ranges:
+    - start: null
+      end: null
+
+KBGM:
+  position:
+    lat: 42.199694
+    lon: -75.984722
+  active_ranges:
+    - start: null
+      end: null
+
+KBHX:
+  position:
+    lat: 40.498583
+    lon: -124.29216
+  active_ranges:
+    - start: null
+      end: null
+
+KBIS:
+  position:
+    lat: 46.770833
+    lon: -100.76055
+  active_ranges:
+    - start: null
+      end: null
+
+KBLX:
+  position:
+    lat: 45.853778
+    lon: -108.6068
+  active_ranges:
+    - start: null
+      end: null
+
+KBMX:
+  position:
+    lat: 33.172417
+    lon: -86.770167
+  active_ranges:
+    - start: null
+      end: null
+
+KBOX:
+  position:
+    lat: 41.955778
+    lon: -71.136861
+  active_ranges:
+    - start: null
+      end: null
+
+KBRO:
+  position:
+    lat: 25.916
+    lon: -97.418967
+  active_ranges:
+    - start: null
+      end: null
+
+KBUF:
+  position:
+    lat: 42.948789
+    lon: -78.736781
+  active_ranges:
+    - start: null
+      end: null
+
+KBYX:
+  position:
+    lat: 24.5975
+    lon: -81.703167
+  active_ranges:
+    - start: null
+      end: null
+
+KCAE:
+  position:
+    lat: 33.948722
+    lon: -81.118278
+  active_ranges:
+    - start: null
+      end: null
+
+KCBW:
+  position:
+    lat: 46.03925
+    lon: -67.806431
+  active_ranges:
+    - start: null
+      end: null
+
+KCBX:
+  position:
+    lat: 43.490217
+    lon: -116.23603
+  active_ranges:
+    - start: null
+      end: null
+
+KCCX:
+  position:
+    lat: 40.923167
+    lon: -78.003722
+  active_ranges:
+    - start: null
+      end: null
+
+KCLE:
+  position:
+    lat: 41.413217
+    lon: -81.859867
+  active_ranges:
+    - start: null
+      end: null
+
+KCLX:
+  position:
+    lat: 32.655528
+    lon: -81.042194
+  active_ranges:
+    - start: null
+      end: null
+
+KCRI:
+  position:
+    lat: 35.238333
+    lon: -97.46
+  active_ranges:
+    - start: null
+      end: null
+
+KCRP:
+  position:
+    lat: 27.784017
+    lon: -97.51125
+  active_ranges:
+    - start: null
+      end: null
+
+KCXX:
+  position:
+    lat: 44.511
+    lon: -73.166431
+  active_ranges:
+    - start: null
+      end: null
+
+KCYS:
+  position:
+    lat: 41.151919
+    lon: -104.80603
+  active_ranges:
+    - start: null
+      end: null
+
+KDAX:
+  position:
+    lat: 38.501111
+    lon: -121.67783
+  active_ranges:
+    - start: null
+      end: null
+
+KDDC:
+  position:
+    lat: 37.760833
+    lon: -99.968889
+  active_ranges:
+    - start: null
+      end: null
+
+KDFX:
+  position:
+    lat: 29.273139
+    lon: -100.28033
+  active_ranges:
+    - start: null
+      end: null
+
+KDGX:
+  position:
+    lat: 32.279944
+    lon: -89.984444
+  active_ranges:
+    - start: null
+      end: null
+
+KDIX:
+  position:
+    lat: 39.947089
+    lon: -74.410731
+  active_ranges:
+    - start: null
+      end: null
+
+KDLH:
+  position:
+    lat: 46.836944
+    lon: -92.209722
+  active_ranges:
+    - start: null
+      end: null
+
+KDMX:
+  position:
+    lat: 41.7312
+    lon: -93.722869
+  active_ranges:
+    - start: null
+      end: null
+
+KDOX:
+  position:
+    lat: 38.825767
+    lon: -75.440117
+  active_ranges:
+    - start: null
+      end: null
+
+KDTX:
+  position:
+    lat: 42.7
+    lon: -83.471667
+  active_ranges:
+    - start: null
+      end: null
+
+KDVN:
+  position:
+    lat: 41.611667
+    lon: -90.580833
+  active_ranges:
+    - start: null
+      end: null
+
+KDYX:
+  position:
+    lat: 32.5385
+    lon: -99.254333
+  active_ranges:
+    - start: null
+      end: null
+
+KEAX:
+  position:
+    lat: 38.81025
+    lon: -94.264472
+  active_ranges:
+    - start: null
+      end: null
+
+KEMX:
+  position:
+    lat: 31.89365
+    lon: -110.63025
+  active_ranges:
+    - start: null
+      end: null
+
+KENX:
+  position:
+    lat: 42.586556
+    lon: -74.064083
+  active_ranges:
+    - start: null
+      end: null
+
+KEOX:
+  position:
+    lat: 31.460556
+    lon: -85.459389
+  active_ranges:
+    - start: null
+      end: null
+
+KEPZ:
+  position:
+    lat: 31.873056
+    lon: -106.698
+  active_ranges:
+    - start: null
+      end: null
+
+KESX:
+  position:
+    lat: 35.70135
+    lon: -114.89165
+  active_ranges:
+    - start: null
+      end: null
+
+KEVX:
+  position:
+    lat: 30.565033
+    lon: -85.921667
+  active_ranges:
+    - start: null
+      end: null
+
+KEWX:
+  position:
+    lat: 29.704056
+    lon: -98.028611
+  active_ranges:
+    - start: null
+      end: null
+
+KEYX:
+  position:
+    lat: 35.09785
+    lon: -117.56075
+  active_ranges:
+    - start: null
+      end: null
+
+KFCX:
+  position:
+    lat: 37.0244
+    lon: -80.273969
+  active_ranges:
+    - start: null
+      end: null
+
+KFDR:
+  position:
+    lat: 34.362194
+    lon: -98.976667
+  active_ranges:
+    - start: null
+      end: null
+
+KFDX:
+  position:
+    lat: 34.634167
+    lon: -103.61888
+  active_ranges:
+    - start: null
+      end: null
+
+KFFC:
+  position:
+    lat: 33.36355
+    lon: -84.56595
+  active_ranges:
+    - start: null
+      end: null
+
+KFSD:
+  position:
+    lat: 43.587778
+    lon: -96.729444
+  active_ranges:
+    - start: null
+      end: null
+
+KFSX:
+  position:
+    lat: 34.574333
+    lon: -111.19844
+  active_ranges:
+    - start: null
+      end: null
+
+KFTG:
+  position:
+    lat: 39.786639
+    lon: -104.5458
+  active_ranges:
+    - start: null
+      end: null
+
+KFWS:
+  position:
+    lat: 32.573
+    lon: -97.30315
+  active_ranges:
+    - start: null
+      end: null
+
+KGGW:
+  position:
+    lat: 48.206361
+    lon: -106.62469
+  active_ranges:
+    - start: null
+      end: null
+
+KGJX:
+  position:
+    lat: 39.062169
+    lon: -108.21376
+  active_ranges:
+    - start: null
+      end: null
+
+KGLD:
+  position:
+    lat: 39.366944
+    lon: -101.70027
+  active_ranges:
+    - start: null
+      end: null
+
+KGRB:
+  position:
+    lat: 44.498633
+    lon: -88.111111
+  active_ranges:
+    - start: null
+      end: null
+
+KGRK:
+  position:
+    lat: 30.721833
+    lon: -97.382944
+  active_ranges:
+    - start: null
+      end: null
+
+KGRR:
+  position:
+    lat: 42.893889
+    lon: -85.544889
+  active_ranges:
+    - start: null
+      end: null
+
+KGSP:
+  position:
+    lat: 34.883306
+    lon: -82.219833
+  active_ranges:
+    - start: null
+      end: null
+
+KGWX:
+  position:
+    lat: 33.896917
+    lon: -88.329194
+  active_ranges:
+    - start: null
+      end: null
+
+KGYX:
+  position:
+    lat: 43.891306
+    lon: -70.256361
+  active_ranges:
+    - start: null
+      end: null
+
+KHDC:
+  position:
+    lat: 30.5193
+    lon: -90.4074
+  active_ranges:
+    - start: "2024-03-23"
+      end: null
+
+KHDX:
+  position:
+    lat: 33.077
+    lon: -106.12003
+  active_ranges:
+    - start: "1995-08-24"
+      end: null
+
+KHGX:
+  position:
+    lat: 29.4719
+    lon: -95.078733
+  active_ranges:
+    - start: null
+      end: null
+
+KHNX:
+  position:
+    lat: 36.314181
+    lon: -119.63213
+  active_ranges:
+    - start: null
+      end: null
+
+KHPX:
+  position:
+    lat: 36.736972
+    lon: -87.285583
+  active_ranges:
+    - start: null
+      end: null
+
+KHTX:
+  position:
+    lat: 34.930556
+    lon: -86.083611
+  active_ranges:
+    - start: null
+      end: null
+
+KICT:
+  position:
+    lat: 37.654444
+    lon: -97.443056
+  active_ranges:
+    - start: null
+      end: null
+
+KICX:
+  position:
+    lat: 37.59105
+    lon: -112.86218
+  active_ranges:
+    - start: null
+      end: null
+
+KILN:
+  position:
+    lat: 39.420483
+    lon: -83.82145
+  active_ranges:
+    - start: null
+      end: null
+
+KILX:
+  position:
+    lat: 40.1505
+    lon: -89.336792
+  active_ranges:
+    - start: null
+      end: null
+
+KIND:
+  position:
+    lat: 39.7075
+    lon: -86.280278
+  active_ranges:
+    - start: null
+      end: null
+
+KINX:
+  position:
+    lat: 36.175131
+    lon: -95.564161
+  active_ranges:
+    - start: null
+      end: null
+
+KIWA:
+  position:
+    lat: 33.289233
+    lon: -111.66991
+  active_ranges:
+    - start: null
+      end: null
+
+KIWX:
+  position:
+    lat: 41.358611
+    lon: -85.7
+  active_ranges:
+    - start: "1997-08-30"
+      end: null
+
+KJAX:
+  position:
+    lat: 30.484633
+    lon: -81.7019
+  active_ranges:
+    - start: null
+      end: null
+
+KJGX:
+  position:
+    lat: 32.675683
+    lon: -83.350833
+  active_ranges:
+    - start: null
+      end: null
+
+KJKL:
+  position:
+    lat: 37.590833
+    lon: -83.313056
+  active_ranges:
+    - start: null
+      end: null
+
+KLBB:
+  position:
+    lat: 33.654139
+    lon: -101.81416
+  active_ranges:
+    - start: null
+      end: null
+
+KLCH:
+  position:
+    lat: 30.125306
+    lon: -93.215889
+  active_ranges:
+    - start: null
+      end: null
+
+KLGX:
+  position:
+    lat: 47.116944
+    lon: -124.10666
+  active_ranges:
+    - start: "2011-10-01"
+      end: null
+
+KLIX:
+  position:
+    lat: 30.336667
+    lon: -89.825417
+  active_ranges:
+    - start: null
+      end: "2024-03-28"
+
+KLNX:
+  position:
+    lat: 41.957944
+    lon: -100.57622
+  active_ranges:
+    - start: null
+      end: null
+
+KLOT:
+  position:
+    lat: 41.604444
+    lon: -88.084444
+  active_ranges:
+    - start: null
+      end: null
+
+KLRX:
+  position:
+    lat: 40.73955
+    lon: -116.8027
+  active_ranges:
+    - start: null
+      end: null
+
+KLSX:
+  position:
+    lat: 38.698611
+    lon: -90.682778
+  active_ranges:
+    - start: null
+      end: null
+
+KLTX:
+  position:
+    lat: 33.98915
+    lon: -78.429108
+  active_ranges:
+    - start: null
+      end: null
+
+KLVX:
+  position:
+    lat: 37.975278
+    lon: -85.943889
+  active_ranges:
+    - start: null
+      end: null
+
+KLWX:
+  position:
+    lat: 38.976111
+    lon: -77.4875
+  active_ranges:
+    - start: "1992-06-12"
+      end: null
+
+KLZK:
+  position:
+    lat: 34.8365
+    lon: -92.262194
+  active_ranges:
+    - start: null
+      end: null
+
+KMAF:
+  position:
+    lat: 31.943461
+    lon: -102.18925
+  active_ranges:
+    - start: null
+      end: null
+
+KMAX:
+  position:
+    lat: 42.081169
+    lon: -122.71736
+  active_ranges:
+    - start: null
+      end: null
+
+KMBX:
+  position:
+    lat: 48.393056
+    lon: -100.86444
+  active_ranges:
+    - start: null
+      end: null
+
+KMHX:
+  position:
+    lat: 34.775908
+    lon: -76.876189
+  active_ranges:
+    - start: null
+      end: null
+
+KMKX:
+  position:
+    lat: 42.9679
+    lon: -88.550667
+  active_ranges:
+    - start: null
+      end: null
+
+KMLB:
+  position:
+    lat: 28.113194
+    lon: -80.654083
+  active_ranges:
+    - start: null
+      end: null
+
+KMOB:
+  position:
+    lat: 30.679444
+    lon: -88.24
+  active_ranges:
+    - start: null
+      end: null
+
+KMPX:
+  position:
+    lat: 44.848889
+    lon: -93.565528
+  active_ranges:
+    - start: null
+      end: null
+
+KMQT:
+  position:
+    lat: 46.531111
+    lon: -87.548333
+  active_ranges:
+    - start: null
+      end: null
+
+KMRX:
+  position:
+    lat: 36.168611
+    lon: -83.401944
+  active_ranges:
+    - start: null
+      end: null
+
+KMSX:
+  position:
+    lat: 47.041
+    lon: -113.98622
+  active_ranges:
+    - start: null
+      end: null
+
+KMTX:
+  position:
+    lat: 41.262778
+    lon: -112.44777
+  active_ranges:
+    - start: null
+      end: null
+
+KMUX:
+  position:
+    lat: 37.155222
+    lon: -121.89844
+  active_ranges:
+    - start: null
+      end: null
+
+KMVX:
+  position:
+    lat: 47.527778
+    lon: -97.325556
+  active_ranges:
+    - start: null
+      end: null
+
+KMXX:
+  position:
+    lat: 32.53665
+    lon: -85.78975
+  active_ranges:
+    - start: null
+      end: null
+
+KNKX:
+  position:
+    lat: 32.919017
+    lon: -117.0418
+  active_ranges:
+    - start: null
+      end: null
+
+KNQA:
+  position:
+    lat: 35.344722
+    lon: -89.873333
+  active_ranges:
+    - start: null
+      end: null
+
+KOAX:
+  position:
+    lat: 41.320369
+    lon: -96.366819
+  active_ranges:
+    - start: null
+      end: null
+
+KOHX:
+  position:
+    lat: 36.247222
+    lon: -86.5625
+  active_ranges:
+    - start: null
+      end: null
+
+KOKX:
+  position:
+    lat: 40.865528
+    lon: -72.863917
+  active_ranges:
+    - start: null
+      end: null
+
+KOTX:
+  position:
+    lat: 47.680417
+    lon: -117.62677
+  active_ranges:
+    - start: null
+      end: null
+
+KOUN:
+  position:
+    lat: 35.236058
+    lon: -97.46235
+  active_ranges:
+    - start: null
+      end: null
+
+KPAH:
+  position:
+    lat: 37.068333
+    lon: -88.771944
+  active_ranges:
+    - start: null
+      end: null
+
+KPBZ:
+  position:
+    lat: 40.531717
+    lon: -80.217967
+  active_ranges:
+    - start: null
+      end: null
+
+KPDT:
+  position:
+    lat: 45.69065
+    lon: -118.85293
+  active_ranges:
+    - start: null
+      end: null
+
+KPOE:
+  position:
+    lat: 31.155278
+    lon: -92.976111
+  active_ranges:
+    - start: null
+      end: null
+
+KPUX:
+  position:
+    lat: 38.45955
+    lon: -104.18135
+  active_ranges:
+    - start: null
+      end: null
+
+KRAX:
+  position:
+    lat: 35.665519
+    lon: -78.48975
+  active_ranges:
+    - start: null
+      end: null
+
+KRGX:
+  position:
+    lat: 39.754056
+    lon: -119.46202
+  active_ranges:
+    - start: null
+      end: null
+
+KRIW:
+  position:
+    lat: 43.066089
+    lon: -108.4773
+  active_ranges:
+    - start: null
+      end: null
+
+KRLX:
+  position:
+    lat: 38.311111
+    lon: -81.722778
+  active_ranges:
+    - start: null
+      end: null
+
+KRTX:
+  position:
+    lat: 45.715039
+    lon: -122.965
+  active_ranges:
+    - start: null
+      end: null
+
+KSFX:
+  position:
+    lat: 43.1056
+    lon: -112.68613
+  active_ranges:
+    - start: null
+      end: null
+
+KSGF:
+  position:
+    lat: 37.235239
+    lon: -93.400419
+  active_ranges:
+    - start: null
+      end: null
+
+KSHV:
+  position:
+    lat: 32.450833
+    lon: -93.84125
+  active_ranges:
+    - start: null
+      end: null
+
+KSJT:
+  position:
+    lat: 31.371278
+    lon: -100.4925
+  active_ranges:
+    - start: null
+      end: null
+
+KSOX:
+  position:
+    lat: 33.817733
+    lon: -117.636
+  active_ranges:
+    - start: null
+      end: null
+
+KSRX:
+  position:
+    lat: 35.290417
+    lon: -94.361889
+  active_ranges:
+    - start: null
+      end: null
+
+KTBW:
+  position:
+    lat: 27.7055
+    lon: -82.401778
+  active_ranges:
+    - start: null
+      end: null
+
+KTFX:
+  position:
+    lat: 47.459583
+    lon: -111.38533
+  active_ranges:
+    - start: null
+      end: null
+
+KTLH:
+  position:
+    lat: 30.397583
+    lon: -84.328944
+  active_ranges:
+    - start: null
+      end: null
+
+KTLX:
+  position:
+    lat: 35.333361
+    lon: -97.277761
+  active_ranges:
+    - start: null
+      end: null
+
+KTWX:
+  position:
+    lat: 38.99695
+    lon: -96.23255
+  active_ranges:
+    - start: null
+      end: null
+
+KTYX:
+  position:
+    lat: 43.755694
+    lon: -75.679861
+  active_ranges:
+    - start: null
+      end: null
+
+KUDX:
+  position:
+    lat: 44.124722
+    lon: -102.83
+  active_ranges:
+    - start: null
+      end: null
+
+KUEX:
+  position:
+    lat: 40.320833
+    lon: -98.441944
+  active_ranges:
+    - start: null
+      end: null
+
+KVAX:
+  position:
+    lat: 30.890278
+    lon: -83.001806
+  active_ranges:
+    - start: null
+      end: null
+
+KVBX:
+  position:
+    lat: 34.83855
+    lon: -120.39791
+  active_ranges:
+    - start: null
+      end: null
+
+KVNX:
+  position:
+    lat: 36.740617
+    lon: -98.127717
+  active_ranges:
+    - start: null
+      end: null
+
+KVTX:
+  position:
+    lat: 34.412017
+    lon: -119.17875
+  active_ranges:
+    - start: null
+      end: null
+
+KVWX:
+  position:
+    lat: 38.26025
+    lon: -87.724528
+  active_ranges:
+    - start: null
+      end: null
+
+KYUX:
+  position:
+    lat: 32.495281
+    lon: -114.65671
+  active_ranges:
+    - start: null
+      end: null
+
+LPLA:
+  position:
+    lat: 38.73028
+    lon: -27.32167
+  active_ranges:
+    - start: null
+      end: null
+
+RKJK:
+  position:
+    lat: 35.924167
+    lon: 126.622222
+  active_ranges:
+    - start: null
+      end: null
+
+RKSG:
+  position:
+    lat: 37.207569
+    lon: 127.285561
+  active_ranges:
+    - start: null
+      end: null
+
+RODN:
+  position:
+    lat: 26.3078
+    lon: 127.903469
+  active_ranges:
+    - start: null
+      end: null

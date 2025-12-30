@@ -97,6 +97,7 @@ def load_grs_tracks(
     chunk_size: int = 100_000,
     max_gap_hours: float = 6.0,
     dates: Optional[Sequence[datetime]] = None,
+    verify_ssl: bool = True, # switch to false if the server's certification is expired
 ) -> pd.DataFrame:
     """
     Download & cache daily GR-S CSVs, parse them in parallel (fast C-engine if possible),
@@ -110,7 +111,6 @@ def load_grs_tracks(
         |
         \- Processed-cache filenames include a hash for date-subsets to avoid overwriting full-year caches.
     """
-
     import hashlib  # local import to keep change footprint minimal
 
     save_dir = Path(save_dir)
@@ -162,11 +162,31 @@ def load_grs_tracks(
             if processed_csv.exists():
                 return pd.read_csv(processed_csv)
 
-    # helper to download a single day (safe atomic write)
+    # log if we aren't verifying ssl for best practices
+    if not verify_ssl:
+        # Suppress urllib3's InsecureRequestWarning (optional but keeps logs clean)
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except Exception:
+            pass
+
+        # One explicit warning per call
+        logger.warning(
+            "[load_grs_tracks] SSL verification is DISABLED (verify_ssl=False). "
+            "Only do this for trusted/public endpoints."
+        )
+
+    # helper to download a single day's gr-s tracks (safe atomic write)
     def _download_day(url: str, local_path: Path) -> Tuple[bool, str]:
         tmp = local_path.with_suffix(local_path.suffix + ".tmp")
         try:
-            r = requests.get(url, allow_redirects=True, timeout=timeout)
+            r = requests.get(
+                url,
+                allow_redirects=True,
+                timeout=timeout,
+                verify=verify_ssl,   # <-- add this
+            )
         except Exception:
             if debug:
                 logger.exception("[download] request error %s", url)
@@ -193,6 +213,7 @@ def load_grs_tracks(
             except Exception:
                 pass
             return False, url
+
 
     # Check local cache and collect missing days
     missing: List[Tuple[datetime, Path]] = []
