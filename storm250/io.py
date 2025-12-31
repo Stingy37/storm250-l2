@@ -61,9 +61,9 @@ def _save_field_pack(
     debug: bool = False,
 ) -> None:
     """
-    Save a single field into two small files:
+    Save a single field from a Py-ART radar object into two small files:
       - {base_path}.npz  : compressed data + mask
-      - {base_path}.json : tiny metadata (everything except 'data')
+      - {base_path}.json : tiny field-specific metadata (everything except 'data')
     """
     try:
         bp = _as_path(base_path)
@@ -88,7 +88,7 @@ def _save_field_pack(
 
 def _load_field_pack(base_path: PathLike, debug: bool = False) -> Optional[dict]:
     """
-    Load a single field pack and return a pyart-compatible field dict.
+    Load a single field pack and return a pyart-compatible field dict, where a field radar product is from pyart radar object. 
     """
     try:
         bp = _as_path(base_path)

@@ -9,15 +9,18 @@ def _product_name_map(allowed_fields):
     # mapping from "file-safe key" -> "pyart field name"
     return { _product_key(f): f for f in allowed_fields }
 
-
+#                        /- where r is a existing full PyART radar object
 def _make_radar_skeleton(r):
+    """
+    Creates a Py-ART radar object but without fields or field metadata. Essentially only contains geometry.
+    """
     import pyart
     import numpy as np
 
-    # minimal copies; no fields
+    # minimal copies; IMPORTANT PART -> no fields
     time     = {'data': r.time['data'].copy()}
     rng_dict = {'data': r.range['data'].copy()}   # source attr is 'range'
-    fields   = {}
+    fields   = {}                                 # where fields take up most of the memory... not lightweight metadata
     metadata = dict(getattr(r, "metadata", {}) or {})
 
     latitude   = dict(r.latitude)
@@ -55,7 +58,7 @@ def _make_radar_skeleton(r):
     instrument_parameters = None
     radar_calibration = None
 
-    # Build via keywords; be compatible with both `_range` and `range`
+    # Build the new PyART radar object via keywords; be compatible with both `_range` and `range`
     try:
         return pyart.core.Radar(
             time=time, _range=rng_dict, fields=fields, metadata=metadata,
@@ -127,7 +130,7 @@ def find_radar_scans(
     storm_df: pd.DataFrame,
     site_column: str = "radar_site",
     time_column: str = "time",
-    level2_base: str = "unidata-nexrad-level2",   # NEW: AWS Level II bucket (name or s3://bucket)
+    level2_base: str = "unidata-nexrad-level2",   # AWS Level II bucket (name or s3://bucket)
     cache_dir: str = "Datasets/nexrad_datasets/level_two_raw",  # keep local Drive/FS cache
     product_filter: List = None,                  # e.g. ["reflectivity","velocity","zdr","rhohv"]
     time_tolerance_seconds: int = 29,             # +/- tolerance for matching volume start times
@@ -138,13 +141,21 @@ def find_radar_scans(
     Link GR-S storm rows to NEXRAD Level II volume files on AWS S3 (Unidata bucket).
     For each storm timestamp (UTC), find the nearest Level II volume for the storm's radar
     within +/- `time_tolerance_seconds`. Optionally restrict to specific Level II fields
-    using `product_filter` (e.g., ["reflectivity","velocity","zdr"]).
+    using `product_filter` (e.g., ["reflectivity","velocity","zdr"]). Then, build cache system
+    for each Level II volume to (optionally) prevent in-memory storage and allow easy reconstruction in 
+    future runs. Each PYART radar object is split into lightweight geometry (one gz pkl file), then
+    npz array + field metadata for each field (reflectivity, velocity, etc.)
 
     Returns a subset of `storm_df` with extra columns:
       - If product_filter is provided: for each normalized field key `k`:
           * `{k}_scan`                : Py-ART Radar object (or None if keep_in_memory=False)
-          * `{k}_cache_member_name`   : local pickle path where the Radar object is cached
-          * `{k}_matched_member_name` : matched S3 object key (filename)
+          * `{k}_cache_volume_path`   : local pickle path where the Radar object is cached
+                                         \- for ALL field rows resulting from a single radar volume, 
+                                         this path should point to the same gz pkl file
+          * `{k}_matched_volume_s3_key` : matched S3 object key (filename)
+                                        \- for ALL field rows resulting from a single radar volume,
+                                         this path should point back to the same S3 object 
+          - Note that each field gets its own columns
       - Else (no product_filter): legacy single triple:
           * 'radar_scan', 'cache_member_name', 'matched_member_name'
 
@@ -154,6 +165,10 @@ def find_radar_scans(
       - No tar handling (complete migration to Level II single-file volumes).
       - Preserves overall structure, caching, and debug verbosity from Level III version.
     """
+
+    ############################################################ HELPERS ############################################################
+
+
     # Utilities / Normalizers
     def _strip_s3_prefix(b):
         return b[5:] if isinstance(b, str) and b.startswith("s3://") else b
@@ -240,8 +255,10 @@ def find_radar_scans(
 
     def _s3_read_pyart(bucket: str, key: str):
         """
-        Read a Level II volume into a Py-ART Radar object.
+        Main IO operation: read a Level II volume into a Py-ART Radar object.
         Prefer s3fs path; fallback to boto3 BytesIO.
+        
+        Returns the Py-ART radar object
         """
         import pyart
         s3path = _s3_uri(bucket, key)
@@ -256,6 +273,10 @@ def find_radar_scans(
         except Exception as e:
             if debug: print(f"[find_radar_scans] pyart read failed for {s3path}: {e}")
         return None
+
+
+    ########################################################## NORMALIZE INPUT DF ############################################################
+
 
     # Quick-empty checks
     if storm_df is None or len(storm_df) == 0:
@@ -309,6 +330,10 @@ def find_radar_scans(
     # Results
     linked_rows: List[dict] = []
     tol = pd.Timedelta(seconds=time_tolerance_seconds)
+
+
+    ################################################### SEARCH FOR S3 LEVEL II VOLUME ############################################################
+
 
     # Iterate by date; list S3 once per day
     for day, times_for_day in date_to_times.items():
@@ -379,14 +404,33 @@ def find_radar_scans(
             fname = os.path.basename(key)
 
 
-            # ---- Field-level caching paths (no duplicate {site}/{site} in path) ----
-            base_rel = os.path.join(day.strftime("%Y%m%d"), fname)                  # e.g., 20170717/KMTX20170717_230028_V06
-            base_dir = os.path.join(pkl_cache_dir, base_rel)                        # Datasets/.../KMTX/20170717/...
+            ############################################# BUILD / SAVE RADAR OBJECT ####################################################
+            #                   load the radar object and immediately slim it (remove unnecessary fields) + split into 
+            #                                                corresponding caches
+
+
+            # field-level caching paths 
+            base_rel = os.path.join(day.strftime("%Y%m%d"), fname)                 
+            base_dir = os.path.join(pkl_cache_dir, base_rel)                        
             skeleton_path = base_dir + ".skeleton.pkl.gz"
 
-            # Unified path that we expose in the DataFrame:
+            # Unified path to geometry cache, exposed in df for all fields resulting from this volume
             df_cache_path = skeleton_path if allowed_fields else (base_dir + ".radar.pkl.gz")
 
+            # radar_obj -> represents the actual volume we will get from s3 OR from existing cache 
+            # IMPORTANT: radar_obj is a Py-ART radar object (always)
+            #
+            #              ___________________________________
+            #              | radar_obj (Py-ART radar object) |
+            #              ----------------|------------------
+            #                              |
+            #          |-------------------|--------------------------------------|
+            #    ______|__________________________________________           _____|____
+            #    | geometry metadata (one for the entire volume) |           | fields |
+            #    -------------------------------------------------           -----|----
+            #                                                      _______________|__________________
+            #                                                      | field metadata (one per field) |
+            #                                                      ----------------------------------
             radar_obj = None
 
             if allowed_fields:
@@ -397,11 +441,14 @@ def find_radar_scans(
                 have_skeleton = os.path.exists(skeleton_path)
                 have_all_fields = all(os.path.exists(p + ".npz") and os.path.exists(p + ".json") for p in field_paths.values())
 
+                # if we have geometry skeleton + field caches (npz + json) then just rebuild the radar_obj from that
                 if have_skeleton and have_all_fields:
-                    # Rebuild slim Radar from cache
-                    sk = _load_gz_pickle(skeleton_path, debug=debug)
-                    if sk is not None:
-                        radar_obj = sk
+                    # Rebuild slim radar from cache
+                    sk = _load_gz_pickle(skeleton_path, debug=debug) # where sk -> geometry metadata
+                    if sk is not None:  #                                   |
+                        radar_obj = sk  #                             but crucially, sk stores the geometry metadata AS a Py-ART radar object with empty fields
+                                        #                                   \- hence, we can set radar_obj = sk and fill in the fields by loading from the field caches
+                        # now load in the fields
                         for k, fldname in keymap.items():
                             pack = _load_field_pack(field_paths[k], debug=debug)
                             if pack is not None:
@@ -416,14 +463,16 @@ def find_radar_scans(
                     if debug: print(f"[find_radar_scans] FAILED to read {key} from s3://{bucket}")
                     continue
 
+                # separate radar_obj into caches 
                 if allowed_fields:
-                    # Keep only requested fields & convert to float32
+                    # Keep only requested fields & convert field arrays to float32 (lowers memory usage before we even start building caches)
                     _slim_to_fields(radar_obj, allowed_fields)
 
-                    # Write skeleton + per-field packs
+                    # Write skeleton Py-ART radar object, and save it as a gz pickle (compressed pkl)
                     _save_gz_pickle(_make_radar_skeleton(radar_obj), skeleton_path, debug=debug)
                     if debug: print(f"[find_radar_scans] skeleton WRITE: {skeleton_path}")
 
+                    # now build the cache for fields (results in npz and json being saved, per field)
                     for fldname in allowed_fields:
                         if fldname in radar_obj.fields:
                             k = _product_key(fldname)             # file-safe key
@@ -435,6 +484,9 @@ def find_radar_scans(
                     single_path = df_cache_path
                     _save_gz_pickle(radar_obj, single_path, debug=debug)
                     if debug: print(f"[find_radar_scans] cache WRITE (single gz): {single_path}")
+
+
+            ################################################## BUILD RETURNED DATAFRAME ##################################################
 
 
             # Find matching storm_df rows with that exact normalized timestamp
@@ -461,14 +513,14 @@ def find_radar_scans(
                     out = row.to_dict()
                     for k, info in prod_infos.items():
                         out[f"{k}_scan"] = info["scan"]
-                        out[f"{k}_cache_member_name"] = info["pkl"]
-                        out[f"{k}_matched_member_name"] = info["name"]
+                        out[f"{k}_cache_volume_path"] = info["pkl"]
+                        out[f"{k}_matched_volume_s3_key"] = info["name"]
                     linked_rows.append(out)
                     matched_count_for_day += 1
                     if debug:
                         print(f"[find_radar_scans] linked {storm_ts} -> {fname} fields={allowed_fields}")
             else:
-                # legacy single triple
+                # legacy single triple, SHOULDN'T happen
                 for _, row in matched_rows.iterrows():
                     out = row.to_dict()
                     out["radar_scan"] = radar_obj if keep_in_memory else None
@@ -492,9 +544,10 @@ def find_radar_scans(
             extra = []
             for fld in allowed_fields:
                 k = _product_key(fld)
-                extra += [f"{k}_scan", f"{k}_cache_member_name", f"{k}_matched_member_name"]
+                extra += [f"{k}_scan", f"{k}_cache_volume_path", f"{k}_matched_volume_s3_key"]
             return pd.DataFrame(columns=base_cols + extra)
         else:
+            # legacy, SHOULDN'T get here
             return pd.DataFrame(columns=base_cols + ["radar_scan", "cache_member_name", "matched_member_name"])
 
     linked_df = pd.DataFrame(linked_rows)
@@ -504,7 +557,7 @@ def find_radar_scans(
         prod_keys = [_product_key(p) for p in allowed_fields]
         extra_cols = []
         for k in prod_keys:
-            extra_cols += [f"{k}_scan", f"{k}_cache_member_name", f"{k}_matched_member_name"]
+            extra_cols += [f"{k}_scan", f"{k}_cache_volume_path", f"{k}_matched_volume_s3_key"]
         cols = list(storm_df.columns) + extra_cols
     else:
         cols = list(storm_df.columns) + ["radar_scan", "cache_member_name", "matched_member_name"]

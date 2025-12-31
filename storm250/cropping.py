@@ -773,7 +773,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
         falling back to legacy 'radar_scan' if present.
       - Use the reference composite to run the exact same bounding logic as before.
       - Crop EVERY product composite present in the row (for each <key>_scan) to the stationary bbox (loading from
-        <key>_cache_member_name if needed) and store the cropped composite back in <key>_scan in the output rows.
+        <key>_cache_volume_path if needed) and store the cropped composite back in <key>_scan in the output rows.
     """
     # set up debug plot dir if requested
     if debug:
@@ -808,7 +808,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
         try:
             # Load the reference composite (try in-memory first, then cache)
             ref_scan_col = (f"{reference_key}_scan" if not legacy_mode else 'radar_scan')
-            ref_cache_col = (f"{reference_key}_cache_member_name" if not legacy_mode else 'cache_member_name')
+            ref_cache_col = (f"{reference_key}_cache_volume_path" if not legacy_mode else 'cache_member_name')
 
             comp_scan = row.get(ref_scan_col, None)
 
@@ -974,7 +974,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
             # For each product key present in the original linked_df, crop its comp (loading from cache if necessary)
             for key in product_keys:
                 scan_col = (f"{key}_scan" if not (legacy_mode and key == 'radar') else 'radar_scan')
-                cache_col = (f"{key}_cache_member_name" if not (legacy_mode and key == 'radar') else 'cache_member_name')
+                cache_col = (f"{key}_cache_volume_path" if not (legacy_mode and key == 'radar') else 'cache_member_name')
 
                 comp = out.get(scan_col, None)
                 if comp is None:

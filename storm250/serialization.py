@@ -14,7 +14,7 @@ def save_df_for_training(
       base_dir/{year}/{RADAR_SITE}/storm_{storm_id}/
 
     Inside each storm folder:
-      - one CONTEXT HDF (rows=times; all bbox_df columns except *_scan and *_cache_member_name)
+      - one CONTEXT HDF (rows=times; all bbox_df columns except *_scan and *_cache_volume_path)
       - one product HDF per *_scan column, each containing dataset '/data'
         shaped (T, H, W, C) with float32 + NaN, chunked & compressed.
 
@@ -230,7 +230,7 @@ def save_df_for_training(
         # ---------- write context HDF ----------
         t_meta0 = perf_counter()
         context_df = sub.copy()
-        drop_cols = [c for c in context_df.columns if c.endswith("_scan") or c.endswith("_cache_member_name")]
+        drop_cols = [c for c in context_df.columns if c.endswith("_scan") or c.endswith("_cache_volume_path")]
         context_df.drop(columns=drop_cols, inplace=True, errors="ignore")
 
         # FIX: add primary-key component time_unix_ms (UTC, int64 ms since epoch)
@@ -364,7 +364,7 @@ def save_df_for_training(
             "hail_lon":        { "dtype": "float32",         "unit": "deg_east",             "desc": "Hail report longitude" },
             "hail_lat":        { "dtype": "float32",         "unit": "deg",                  "desc": "Hail report latitude" },
             "hail_magnitude":  { "dtype": "float32",         "unit": "in",                   "desc": "Hail report size (inches)" },
-            "reflectivity_matched_member_name": { "dtype": "string", "unit": "",            "desc": "Matched radar volume file name" },
+            "reflectivity_matched_volume_s3_key": { "dtype": "string", "unit": "",            "desc": "Matched radar volume file name" },
             "min_lat":         { "dtype": "float32",         "unit": "deg",                  "desc": "Min track latitude" },
             "max_lat":         { "dtype": "float32",         "unit": "deg",                  "desc": "Max track latitude" },
             "min_lon":         { "dtype": "float32",         "unit": "deg_east_wrap180",     "desc": "Min track longitude" },
@@ -728,7 +728,7 @@ def save_df_for_training(
                     host_idx_dset[i] = int(host_idx)
 
                     if srckey_dset is not None:
-                        keycol = f"{prefix}_matched_member_name"
+                        keycol = f"{prefix}_matched_volume_s3_key"
                         try:
                             srckey_dset[i] = str(row.get(keycol, "") or "")
                         except Exception:
