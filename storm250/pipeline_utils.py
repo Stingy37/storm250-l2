@@ -1,7 +1,7 @@
 
 class _QueueStream(io.TextIOBase):
     def __init__(self, q, kind, sid):
-        self.q = q
+        self.q = q        # where q is the queue that we put the transformed stdout / stderr into 
         self.kind = kind  # "log" | "err" | "warn"
         self.sid = sid
         self._buf = []
@@ -17,6 +17,8 @@ class _QueueStream(io.TextIOBase):
             self._buf.clear()
             for line in text.splitlines():
                 try:
+                    #  /- add created object to the queue (usually a errq), which then sends to parent
+                    #                                                          |- which then unpacks -> prints
                     self.q.put_nowait((self.kind, f"[child sid={self.sid}] {line}"))
                 except Exception:
                     # drop if queue is full to avoid deadlock

@@ -1,3 +1,5 @@
+
+
 def _product_key(p: str) -> str:
     # keep your sanitizer semantics
     return re.sub(r'[^0-9A-Za-z]+', '_', p).strip('_').lower() or 'prod'

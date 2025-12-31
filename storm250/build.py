@@ -25,9 +25,26 @@ def log():
 
 # Process one SID on a child process after GR-S is linked, to keep RAM usage down
 def _process_one_group(group_pkl_path, radar_info, training_base, debug_flag, sid, errq):
+    """
+    Code for what happens in one child process, where each process is basically a separate program instance. 
+        - Allows for program isolation (child process for one SID can fail gracefully).
+        - important: allows for memory cleanup through exiting process when finished, which pythonic for-loop doesn't allow for. 
+    """
     import pandas as pd
     import s3fs, gc, ctypes, os, sys, traceback, warnings
 
+    # point the process's standard output and standard error to queue for deterministic prints
+    #    \- deterministic -> same order -> process + parent CAN'T concurrently "write" (i.e. point stdout) to terminal
+    #           (solution: use _QueueStream  + errq to "transport" process stdout to parent, and parent writes)
+    #           ___________        _________        __________        ____________
+    #           | process |--------| queue |--------| parent |--------| terminal |
+    #           -----------        ----|----        ----------        ------------
+    #               /------------------/
+    #           ____|____     ___________________     ________________      ________      __________
+    #           | queue |   = | stdout / stderr |-----| _QueueStream |------| errq |------| parent |
+    #           ---------     -------------------     ----------------      --------      ----------
+    #                                                       |- transforms raw text (stdout/stderr) into object (tuple) expected by errq, 
+    #                                                          then errq passes to parent
     sys.stdout = _QueueStream(errq, "log", sid)
     sys.stderr = _QueueStream(errq, "err", sid)
 
@@ -47,10 +64,13 @@ def _process_one_group(group_pkl_path, radar_info, training_base, debug_flag, si
 
     def log(msg):
         try:
+            #                       /- sys.stderr = _QueueStream(errq, "err", sid)
+            # this is passed to the queue and eventually flushed onto the terminal by parent
             errq.put(("log", f"[child sid={sid} pid={os.getpid()}] {msg}"))
         except Exception:
             pass
 
+    # NOW, we start the per-SID operations (memory intensive)
     try:
         fs = s3fs.S3FileSystem(
             anon=True, skip_instance_cache=True,
@@ -129,6 +149,7 @@ def _process_one_group(group_pkl_path, radar_info, training_base, debug_flag, si
         finally:
             sys.exit(1)
 
+    # shut down the child process to clear memory (we do further cleanup in _run_group_in_child)
     finally:
         try: fs.invalidate_cache()
         except Exception: pass
@@ -143,6 +164,9 @@ def _process_one_group(group_pkl_path, radar_info, training_base, debug_flag, si
 
 
 def _run_group_in_child(sid, group, radar_info, training_base, debug):
+    """
+    creates and manages child process for a certain SID, given the supplied arguments 
+    """
     p = None
     errq = None
     try:
@@ -150,20 +174,27 @@ def _run_group_in_child(sid, group, radar_info, training_base, debug):
             pkl_path = os.path.join(td, f"group_{sid}.pkl")
             group.to_pickle(pkl_path, protocol=5)
 
+            # errq used to pass process's stdout and stderr to parent for deterministic writing
+            #   - queue specifically designed for communication between processes
+            #   - works with python objects, NOT raw text (i.e. NOT stdout or stderr)
+            #           \- QueueStream "translates" between the two 
             ctx = mp.get_context("fork")
             errq = ctx.Queue(maxsize=1000)
 
+            # create child process with the given arguments 
             p = ctx.Process(
                 target=_process_one_group,
                 args=(pkl_path, radar_info, training_base, debug, sid, errq)
             )
             p.start()
 
-            # stream logs while child runs
+            # stream process logs while child runs 
+            # here, this is where the parent flushes stdout and stderr recieved from process via errq + QueueStream
             while True:
                 try:
+                    # we only care about the msg from errq / child process, not the kind (for now)
                     kind, msg = errq.get(timeout=0.5)
-                    print(msg, flush=True)
+                    print(msg, flush=True) # ONE write to terminal from parent
                 except _q.Empty:
                     pass
                 if not p.is_alive():
@@ -196,6 +227,7 @@ def _run_group_in_child(sid, group, radar_info, training_base, debug):
                 pass
         raise  # re-propagate so outer finally runs
 
+    # always free process memory
     finally:
         # tidy queue resources even if interrupted
         if errq is not None:
@@ -213,11 +245,9 @@ def _run_group_in_child(sid, group, radar_info, training_base, debug):
                 pass
 
 
-
 ##########################################################################################################################################################################
 #                                                                        MAIN PIPELINE
 ##########################################################################################################################################################################
-
 
 
 def main_pipeline(debug_flag, year, radar_info, train_rewrite: bool = False, training_base: str = "Datasets/training_datasets/level_two"):
@@ -263,9 +293,7 @@ def main_pipeline(debug_flag, year, radar_info, train_rewrite: bool = False, tra
             print(f"\n spc_df shape: {spc_df.shape} \n")
             display(spc_df.head())
 
-
         ################################################################ LOAD GR-S TRACKS  ###############################################################################
-
 
         # Load gr-s tracks
         grs_df = load_grs_tracks(
@@ -283,19 +311,15 @@ def main_pipeline(debug_flag, year, radar_info, train_rewrite: bool = False, tra
             print(f"\n grs_df shape: {grs_df.shape} \n")
             display(grs_df.head(2000))
 
-
-        ################################################################ LINK GR-S TRACKS  ###############################################################################
-
-
         # Link gr-s tracks to radar scan
         grouped = grs_df.groupby("storm_id")
 
 
+        ############################################################ START SID-SPECIFIC OPERATIONS ###############################################################################
+        #                                         (now, our "global" processes are done and we can operate on each SID individually)
+        #                                                            \- we use processes to avoid memory buildup & practice program isolation
         # Run the child subprocesses
         for sid, group in grouped:
-            # BREAK AFTER PROCESSING ONE STORM (FOR TESTING)
-            # break
-
             if debug_flag:
                 site_col = "radar_site"
                 print(f"[main_pipeline] storm_id={sid} with {len(group)} rows; site(s): {group[site_col].unique().tolist()}")
@@ -358,7 +382,7 @@ if __name__ == "__main__":
         # Run main pipeline
         with cProfile.Profile() as pr:
             main_pipeline(
-                debug_flag=False,         # NOTE -> Individual components have separate debug flags
+                debug_flag=False,        # NOTE -> Individual components have separate debug flags
                 year=2017,               # Unpack into start and end times (datetime objects) within main_pipeline
                 radar_info=radar_info,
                 train_rewrite=False,     # If rewrite is true, then ignore what is currently in training dataset and rewrite entire dataset
