@@ -153,14 +153,6 @@ def _slim_to_fields(r, allowed_fields):
                 r.fields[k]["data"] = np.asarray(arr, dtype=np.float32)
 
 
-def _ray_canonical_roll(az):
-    """Return roll offset so that the first ray is the one with the smallest azimuth (0..360)."""
-    azm = np.mod(np.asarray(az, dtype=float), 360.0)
-    if azm.size == 0 or not np.isfinite(azm).any():
-        return 0
-    return int(np.nanargmin(azm))
-
-
 def find_radar_scans(
     storm_df: pd.DataFrame,
     site_column: str = "radar_site",
@@ -475,9 +467,14 @@ def find_radar_scans(
             #              ----------------|------------------
             #                              |
             #          |-------------------|--------------------------------------|
-            #    ______|__________________________________________           _____|____
-            #    | geometry metadata (one for the entire volume) |           | fields |
-            #    -------------------------------------------------           -----|----
+            #    ______|__________________________________________         _______|______________________
+            #    | geometry metadata (one for the entire volume) |         |         fields             |
+            #    |    - core radar geometry (latitude, time...)  |         | fields['field_type']['data']
+            #    | sweep_start_ray_index, sweep_end_ray_index    |         |  = (n_rays, n_gates)       |
+            #    ------------------------------------------------|         |      \- flattened across   |
+            #                                                              |          ALL sweeps        |       * and we separate n_rays into
+            #                                                              -------|----------------------         individual sweeps through 
+            #                                                                     |                               start_ray_index and end_ray_index
             #                                                      _______________|__________________
             #                                                      | field metadata (one per field) |
             #                                                      ----------------------------------
