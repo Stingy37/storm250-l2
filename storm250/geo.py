@@ -61,9 +61,9 @@ def _compute_metric_grid_and_labels(
     class_field="reflectivity",
     threshold=20,
     pad_m=5000.0,
-    grid_res_m=1000.0,
-    debug=False,
-):
+    grid_res_m=1000.0,  # the metric grid is ONLY used to calculate bounding box (not shipped as final product)
+                        # so a lower resolution is fine
+    debug=False):
     """
     Map a polar composite sweep consisting of rays (azimuth degrees) and gates (range / points along the ray) to
     a metric grid. Then, using the metric grid, label the storm blobs that are present.
