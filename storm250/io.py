@@ -106,3 +106,20 @@ def _load_field_pack(base_path: PathLike, debug: bool = False) -> Optional[dict]
         if debug:
             logger.exception("[find_radar_scans] field load failed %s", base_path)
         return None
+
+
+def _load_composite_pickle(pkl_path: str, debug: bool=False):
+    """
+    Similar to _load_gz_pickle, except that our composite pickle hasn't been compressed yet. 
+    So, no need to first unzip with gzip. 
+    """
+    try:
+        with open(pkl_path, "rb") as fh:
+            comp = pickle.load(fh)
+        if debug:
+            print(f"[cache] loaded composite from {pkl_path}")
+        return comp
+    except Exception as e:
+        if debug:
+            print(f"[cache] failed to load pickle {pkl_path}: {e}")
+        return None

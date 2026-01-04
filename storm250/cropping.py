@@ -1,3 +1,50 @@
+"""
+Docstring for storm250.cropping
+
+Workflow: 
+    raw radar volume
+        ↓
+    build pseudo-composite (used for bbox detection & shipped as a final product)
+        ↓
+    stationary bbox (calculated using all volumes for a single storm)
+        ↓
+    crop (final shipped products):
+        - composite(s)
+        - selected sweeps (cropped with stationary bbox calculatd earlier)
+"""
+
+from __future__ import annotations
+
+import copy
+import logging
+import os
+from datetime import datetime
+from time import perf_counter
+
+import numpy as np
+import numpy.ma as _ma
+import pandas as pd
+
+# for debug plotting blocks (make sure we set backend to use Agg BEFORE importing this module on tests / builder)
+#                             \- allows matplotlib to work on headless env (like EC2 instance)
+import matplotlib.pyplot as _plt
+from matplotlib.patches import Rectangle
+
+from storm250.geo import (
+    _compute_metric_grid_and_labels,
+    _fast_metric_inside_mask,
+    _normalize_lons_to_center,
+)
+from storm250.viz import _save_plot
+from storm250.composite import _make_reflectivity_pseudocomposite
+from storm250.utils import _compute_weighted_dimensions
+from storm250.io import _load_composite_pickle
+
+logger = logging.getLogger(__name__)
+
+
+#                           /- where comp_scan -> special Py-ART radar object where we've inserted a sweep
+#                           |  that is a derived reflectivity composite.
 def _find_blob_for_point(comp_scan,
                          center_lat, center_lon,
                          class_field='reflectivity',
@@ -10,10 +57,15 @@ def _find_blob_for_point(comp_scan,
                          plot_dir: str | None = None,
                          plot_stub: str | None = None):
     """
-    (fast) Find the labeled blob containing (center_lat, center_lon) and return
-    bbox with recursive merging of nearby blobs. Returns (minlat,maxlat,minlon,maxlon, centers_list).
+    Find the labeled blob containing (center_lat, center_lon) and return
+    bbox with recursive merging of nearby blobs. Specifically, the
+    bbox is consisted of (minlat,maxlat,minlon,maxlon).
+
+    Operates on the sweep corresponding to our composite scan.
     """
     from scipy import ndimage as ndi  # local import to keep module deps light
+
+    ################################################# BUILD METRIC GRID #################################################
 
     # timing debug
     if debug:
@@ -21,9 +73,10 @@ def _find_blob_for_point(comp_scan,
         _t0 = perf_counter()
 
     # normalize center lon to canonical range [-180,180)
+    # where center_lon and center_lat is the lon / lat of the storm center from the GR-S tracks dataset
     center_lon = ((center_lon + 180.0) % 360.0) - 180.0
 
-    # grid & labeling (unchanged helper)
+    # grid & labeling, where we now get a metric grid with labeled storm blobs
     info = _compute_metric_grid_and_labels(
         comp_scan, class_field=class_field, threshold=threshold,
         pad_m=pad_m, grid_res_m=grid_res_m, debug=debug
@@ -35,10 +88,10 @@ def _find_blob_for_point(comp_scan,
     t_geog2xy = info['t_geog2xy']
     grid_mask = info['grid_mask']            # boolean mask of valid > threshold
 
-    # center in metric coords (meters)
+    # convert storm center to metric coords (meters), where cx_m and cy_m is relative to the radar's position
     cx_m, cy_m = t_geog2xy.transform(center_lon, center_lat)
 
-    # grid cell containing the center (fast, vectorized edges)
+    # find grid cell containing the center (fast, vectorized edges)
     xi = np.searchsorted(grid_x, cx_m) - 1
     yi = np.searchsorted(grid_y, cy_m) - 1
     xi = max(0, min(xi, grid_x.size - 1))
@@ -49,15 +102,16 @@ def _find_blob_for_point(comp_scan,
     lab_flat = labeled_grid.ravel()
     if debug: _t_stats0 = perf_counter()
     counts = np.bincount(lab_flat)  # index 0 is background
-    # keep labels with enough pixels
+    # keep labels with enough pixels (small storms are dropped)
     valid_labels = np.nonzero(counts >= max(1, int(min_size)))[0]
     valid_labels = valid_labels[valid_labels != 0]  # drop background
 
+    # no sizable storms -> for this scan (specific volume @ certain time) no bbox could be built
     if valid_labels.size == 0:
         if debug:
-            print("[_find_blob_for_point] no blobs passed the min_size filter")
+            logger.info("[_find_blob_for_point] no blobs passed the min_size filter")
             _t_end = perf_counter()
-            print(f"[_find_blob_for_point] TOTAL: {(_t_end - _t0):.3f}s (early exit: no blobs)")
+            logger.info(f"[_find_blob_for_point] TOTAL: {(_t_end - _t0):.3f}s (early exit: no blobs)")
         return None, None, None, None, []
 
     # quick bbox per label via slices (O(N))
@@ -120,15 +174,15 @@ def _find_blob_for_point(comp_scan,
     ]
     if debug:
         _t_stats1 = perf_counter()
-        print(f"[_find_blob_for_point] region stats: {(_t_stats1 - _t_stats0):.3f}s  "
-              f"(labels={valid_labels.size}, total_cells={labeled_grid.size})")
+        logger.info(f"[_find_blob_for_point] region stats: {(_t_stats1 - _t_stats0):.3f}s  "
+                    f"(labels={valid_labels.size}, total_cells={labeled_grid.size})")
 
     # ----- choose initial label -----
     label_at_center = int(labeled_grid[yi, xi]) if (0 <= yi < labeled_grid.shape[0] and 0 <= xi < labeled_grid.shape[1]) else 0
     if label_at_center != 0 and (label_at_center in valid_labels):
         chosen_label = int(label_at_center)
         if debug:
-            print(f"[_find_blob_for_point] center cell belongs to label {chosen_label}")
+            logger.info(f"[_find_blob_for_point] center cell belongs to label {chosen_label}")
     else:
         # vectorized nearest centroid in metric space
         dxv = cx - cx_m
@@ -137,16 +191,16 @@ def _find_blob_for_point(comp_scan,
         chosen_label = int(valid_labels[nearest_idx])
         if debug:
             best_dist = float(np.hypot(dxv[nearest_idx], dyv[nearest_idx]))
-            print(f"[_find_blob_for_point] chosen nearest label {chosen_label} (dist {best_dist:.1f} m)")
+            logger.info(f"[_find_blob_for_point] chosen nearest label {chosen_label} (dist {best_dist:.1f} m)")
     if debug:
         _t_choose = perf_counter()
-        print(f"[_find_blob_for_point] choose-initial-label: {(_t_choose - _t_stats1):.3f}s (label={chosen_label})")
+        logger.info(f"[_find_blob_for_point] choose-initial-label: {(_t_choose - _t_stats1):.3f}s (label={chosen_label})")
 
     # ----- iterative merging (same logic; operates on arrays) -----
     expand_m = float(include_nearby_km) * 1000.0
     included = {chosen_label}
     if debug:
-        print(f"[_find_blob_for_point] starting merge with label {chosen_label}, expand_km={include_nearby_km}")
+        logger.info(f"[_find_blob_for_point] starting merge with label {chosen_label}, expand_km={include_nearby_km}")
 
     # index map from label -> row index in our arrays
     lab_to_idx = {int(lab): int(i) for i, lab in enumerate(valid_labels)}
@@ -170,9 +224,9 @@ def _find_blob_for_point(comp_scan,
         exp_maxy = umaxy + expand_m
 
         if debug:
-            print(f"[_find_blob_for_point] iter {iteration}: included={sorted(included)}, "
-                  f"union_bbox_m=[{uminx:.1f},{umaxx:.1f}] x [{uminy:.1f},{umaxy:.1f}], "
-                  f"expanded by {expand_m:.1f} m")
+            logger.info(f"[_find_blob_for_point] iter {iteration}: included={sorted(included)}, "
+                        f"union_bbox_m=[{uminx:.1f},{umaxx:.1f}] x [{uminy:.1f},{umaxy:.1f}], "
+                        f"expanded by {expand_m:.1f} m")
 
         # Compute bbox-to-bbox distance to all *not yet included* candidates (vectorized)
         remaining = [l for l in valid_labels if l not in included]
@@ -194,17 +248,17 @@ def _find_blob_for_point(comp_scan,
         add_mask = (dist <= expand_m)  # overlap or within expand distance
         if not np.any(add_mask):
             if debug:
-                print(f"[_find_blob_for_point] iter {iteration}: no new blobs added; merging finished")
+                logger.info(f"[_find_blob_for_point] iter {iteration}: no new blobs added; merging finished")
             break
 
         for l in np.asarray(remaining)[add_mask]:
             included.add(int(l))
             if debug:
-                print(f"[_find_blob_for_point] iter {iteration}: added label {int(l)} (bbox-dist {float(dist[add_mask][0]):.1f} m)")
+                logger.info(f"[_find_blob_for_point] iter {iteration}: added label {int(l)} (bbox-dist {float(dist[add_mask][0]):.1f} m)")
     if debug:
         _t_merge1 = perf_counter()
-        print(f"[_find_blob_for_point] merge nearby: {(_t_merge1 - _t_merge0):.3f}s  "
-              f"(iters={iteration}, included={len(included)})")
+        logger.info(f"[_find_blob_for_point] merge nearby: {(_t_merge1 - _t_merge0):.3f}s  "
+                    f"(iters={iteration}, included={len(included)})")
 
     # final union bbox (metric coords)
     idxs = np.fromiter((lab_to_idx[l] for l in included), dtype=int)
@@ -226,14 +280,12 @@ def _find_blob_for_point(comp_scan,
     maxlat = float(lat_pair[1])
     if debug:
         _t_back1 = perf_counter()
-        print(f"[_find_blob_for_point] bbox metric→geo transform: {(_t_back1 - _t_back0)*1000:.1f} ms")
-        print(f"[_find_blob_for_point] final merged bbox lat [{minlat:.4f}, {maxlat:.4f}] lon [{minlon:.4f}, {maxlon:.4f}]")
-        print(f"[_find_blob_for_point] merged labels: {sorted(list(included))}")
+        logger.info(f"[_find_blob_for_point] bbox metric→geo transform: {(_t_back1 - _t_back0)*1000:.1f} ms")
+        logger.info(f"[_find_blob_for_point] final merged bbox lat [{minlat:.4f}, {maxlat:.4f}] lon [{minlon:.4f}, {maxlon:.4f}]")
+        logger.info(f"[_find_blob_for_point] merged labels: {sorted(list(included))}")
 
-        '''
         ################################################### COMMENT PLOTTING BLOCK OUT ON PRODUCTION RUNS #######################################################
         #                                                             (VERY SLOW OTHERWISE)
-
 
         # plotting block unchanged except we already know the host sweep
         try:
@@ -247,7 +299,7 @@ def _find_blob_for_point(comp_scan,
                 display.plot(class_field, sweep=sweep, ax=ax0, title=f"Reflectivity (sweep {sweep})")
             except Exception as e:
                 if debug:
-                    print(f"[_find_blob_for_point] RadarDisplay plotting failed: {e}")
+                    logger.info(f"[_find_blob_for_point] RadarDisplay plotting failed: {e}")
                 ax0.text(0.5, 0.5, "RadarDisplay failed", ha='center')
                 ax0.set_title("Reflectivity (not available)")
 
@@ -324,15 +376,13 @@ def _find_blob_for_point(comp_scan,
 
         except Exception as e:
             if debug:
-                print(f"[_find_blob_for_point] debug plotting (reflectivity + mask) failed: {e}")
-
+                logger.info(f"[_find_blob_for_point] debug plotting (reflectivity + mask) failed: {e}")
 
         ################################################################### END BLOCK ###################################################################
-        '''
 
     if debug:
         _t_total = perf_counter()
-        print(f"[_find_blob_for_point] TOTAL: {(_t_total - _t0):.3f}s")
+        logger.info(f"[_find_blob_for_point] TOTAL: {(_t_total - _t0):.3f}s")
     return minlat, maxlat, minlon, maxlon, centers, info
 
 
@@ -344,7 +394,6 @@ def _bbox_center(minlat, maxlat, minlon, maxlon):
     clon = ((clon + 180.0) % 360.0) - 180.0
     clat = 0.5 * (minlat + maxlat)
     return clat, clon
-
 
 
 # Helper: fit averaged box to a scan
@@ -419,11 +468,11 @@ def _fit_box_to_scan_max_overlap(comp_scan,
                 ho = ((ho + 180.0) % 360.0) - 180.0
             used_lat, used_lon = hl, ho
             if debug:
-                print(f"[_fit_box_to_scan_max_overlap] using center_hint=({used_lat:.4f},{used_lon:.4f}) "
-                      f"(raw centroid was {centroid_lat:.4f},{centroid_lon:.4f})")
+                logger.info(f"[_fit_box_to_scan_max_overlap] using center_hint=({used_lat:.4f},{used_lon:.4f}) "
+                            f"(raw centroid was {centroid_lat:.4f},{centroid_lon:.4f})")
         except Exception as e:
             if debug:
-                print(f"[_fit_box_to_scan_max_overlap] center_hint ignored due to error: {e}")
+                logger.info(f"[_fit_box_to_scan_max_overlap] center_hint ignored due to error: {e}")
 
     # prepare projection to metric coordinates (centered at radar)
     if debug: _t_grid0 = perf_counter()
@@ -434,7 +483,7 @@ def _fit_box_to_scan_max_overlap(comp_scan,
     if debug:
         _t_grid1 = perf_counter()
         ny = int(info['grid_y'].size); nx = int(info['grid_x'].size)
-        print(f"[_find_blob_for_point] grid+labeling: {(_t_grid1 - _t_grid0):.3f}s  (ny={ny}, nx={nx}, pixels={ny*nx})")
+        logger.info(f"[_find_blob_for_point] grid+labeling: {(_t_grid1 - _t_grid0):.3f}s  (ny={ny}, nx={nx}, pixels={ny*nx})")
 
     t_geog2xy = info['t_geog2xy']
     t_xy2geog = info['t_xy2geog']
@@ -491,16 +540,15 @@ def _fit_box_to_scan_max_overlap(comp_scan,
                             max(lon_min, lon_max))
 
     if debug:
-        print(f"[_fit_box_to_scan_max_overlap] best_score={best_score:.3f}")
+        logger.info(f"[_fit_box_to_scan_max_overlap] best_score={best_score:.3f}")
         if best_box is not None:
             bminlat, bmaxlat, bminlon, bmaxlon = best_box
-            print(f"[_fit_box_to_scan_max_overlap] best_box "
-                  f"lat [{bminlat:.4f}, {bmaxlat:.4f}] "
-                  f"lon [{bminlon:.4f}, {bmaxlon:.4f}] "
-                  f"(center_used {used_lat:.4f},{used_lon:.4f})")
+            logger.info(f"[_fit_box_to_scan_max_overlap] best_box "
+                        f"lat [{bminlat:.4f}, {bmaxlat:.4f}] "
+                        f"lon [{bminlon:.4f}, {bmaxlon:.4f}] "
+                        f"(center_used {used_lat:.4f},{used_lon:.4f})")
 
     return best_box  # minlat, maxlat, minlon, maxlon
-
 
 
 def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
@@ -554,14 +602,14 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
                 gates = int(np.asarray(comp.range['data']).size)
             except Exception:
                 gates = inside_mask.shape[1] if inside_mask.ndim == 2 else -1
-            print(f"[_crop_comp_scan_to_bbox] dims: rays={rays} gates={gates} fields={len(getattr(comp, 'fields', {}))} "
-                  f"inplace={bool(inplace)} prefer_nan_fill={bool(prefer_nan_fill)} drop_gate_coords={bool(drop_gate_coords)}")
-            print(f"    copy/deepcopy:        {(_t_copy1 - _t_copy0)*1000:.1f} ms")
-            print(f"    bbox math:            {(_t_bbox1 - _t_bbox0)*1000:.1f} ms")
-            print(f"    compute metric mask:  {(_t_mask1 - _t_mask0)*1000:.1f} ms")
-            print(f"    no-op check:          {(perf_counter() - _t_noop0)*1000:.1f} ms")
-            print(f"    TOTAL:                {(perf_counter() - _t0   )*1000:.1f} ms")
-            print("[_crop_comp_scan_to_bbox] bbox covers full radar -> no-op (metric mask all True)")
+            logger.info(f"[_crop_comp_scan_to_bbox] dims: rays={rays} gates={gates} fields={len(getattr(comp, 'fields', {}))} "
+                        f"inplace={bool(inplace)} prefer_nan_fill={bool(prefer_nan_fill)} drop_gate_coords={bool(drop_gate_coords)}")
+            logger.info(f"    copy/deepcopy:        {(_t_copy1 - _t_copy0)*1000:.1f} ms")
+            logger.info(f"    bbox math:            {(_t_bbox1 - _t_bbox0)*1000:.1f} ms")
+            logger.info(f"    compute metric mask:  {(_t_mask1 - _t_mask0)*1000:.1f} ms")
+            logger.info(f"    no-op check:          {(perf_counter() - _t_noop0)*1000:.1f} ms")
+            logger.info(f"    TOTAL:                {(perf_counter() - _t0   )*1000:.1f} ms")
+            logger.info("[_crop_comp_scan_to_bbox] bbox covers full radar -> no-op (metric mask all True)")
         return comp
     _t_noop1 = perf_counter()
 
@@ -732,26 +780,24 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
         except Exception:
             gates = gate_shape[1] if isinstance(gate_shape, tuple) and len(gate_shape) >= 2 else -1
 
-        print(f"[_crop_comp_scan_to_bbox] dims: rays={rays} gates={gates} fields={n_fields} "
-              f"inplace={bool(inplace)} prefer_nan_fill={bool(prefer_nan_fill)} drop_gate_coords={bool(drop_gate_coords)}")
-        print(f"    copy/deepcopy:        {(_t_copy1  - _t_copy0 )*1000:.1f} ms")
-        print(f"    bbox math:            {(_t_bbox1  - _t_bbox0 )*1000:.1f} ms")
-        print(f"    compute metric mask:  {(_t_mask1  - _t_mask0 )*1000:.1f} ms")
-        print(f"    no-op check:          {(_t_noop1  - _t_noop0 )*1000:.1f} ms")
-        print(f"    invert to outside:    {(_t_inv1   - _t_inv0  )*1000:.1f} ms")
-        print(f"    per-field apply:      {(_t_fields1- _t_fields0)*1000:.1f} ms")
-        print(f"        masked merge (n={n_masked}):   {t_masked_merge*1000:.1f} ms")
-        print(f"        float NaN fill (n={n_float}):  {t_float_fill*1000:.1f} ms")
-        print(f"        int/bool wrap (n={n_intbool}): {t_int_wrap*1000:.1f} ms")
-        print(f"        broadcast builds:               {t_bcast_build*1000:.1f} ms")
-        print(f"    drop gate coords:     {(_t_drop1  - _t_drop0 )*1000:.1f} ms")
-        print(f"    cleanup locals:       {(_t_clean1 - _t_clean0)*1000:.1f} ms")
-        print(f"    TOTAL:                {(perf_counter() - _t0   )*1000:.1f} ms")
-        print(f"[_crop_comp_scan_to_bbox] cropped to {minlat:.4f}-{maxlat:.4f}, {minlon:.4f}-{maxlon:.4f} (buffer_km={buffer_km})")
+        logger.info(f"[_crop_comp_scan_to_bbox] dims: rays={rays} gates={gates} fields={n_fields} "
+                    f"inplace={bool(inplace)} prefer_nan_fill={bool(prefer_nan_fill)} drop_gate_coords={bool(drop_gate_coords)}")
+        logger.info(f"    copy/deepcopy:        {(_t_copy1  - _t_copy0 )*1000:.1f} ms")
+        logger.info(f"    bbox math:            {(_t_bbox1  - _t_bbox0 )*1000:.1f} ms")
+        logger.info(f"    compute metric mask:  {(_t_mask1  - _t_mask0 )*1000:.1f} ms")
+        logger.info(f"    no-op check:          {(_t_noop1  - _t_noop0 )*1000:.1f} ms")
+        logger.info(f"    invert to outside:    {(_t_inv1   - _t_inv0  )*1000:.1f} ms")
+        logger.info(f"    per-field apply:      {(_t_fields1- _t_fields0)*1000:.1f} ms")
+        logger.info(f"        masked merge (n={n_masked}):   {t_masked_merge*1000:.1f} ms")
+        logger.info(f"        float NaN fill (n={n_float}):  {t_float_fill*1000:.1f} ms")
+        logger.info(f"        int/bool wrap (n={n_intbool}): {t_int_wrap*1000:.1f} ms")
+        logger.info(f"        broadcast builds:               {t_bcast_build*1000:.1f} ms")
+        logger.info(f"    drop gate coords:     {(_t_drop1  - _t_drop0 )*1000:.1f} ms")
+        logger.info(f"    cleanup locals:       {(_t_clean1 - _t_clean0)*1000:.1f} ms")
+        logger.info(f"    TOTAL:                {(perf_counter() - _t0   )*1000:.1f} ms")
+        logger.info(f"[_crop_comp_scan_to_bbox] cropped to {minlat:.4f}-{maxlat:.4f}, {minlon:.4f}-{maxlon:.4f} (buffer_km={buffer_km})")
 
     return comp
-
-
 
 
 def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
@@ -782,7 +828,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
             debug_plot_dir = os.path.join("Logs", "plots", f"bbox_{ts}_pid{os.getpid()}")
         os.makedirs(debug_plot_dir, exist_ok=True)
         if debug:
-            print(f"[build_bboxes] debug_plot_dir={debug_plot_dir}")
+            logger.info(f"[build_bboxes] debug_plot_dir={debug_plot_dir}")
 
     # detect product keys (columns like '<key>_scan')
     product_keys = sorted({c[:-5] for c in linked_df.columns if c.endswith('_scan')})
@@ -799,7 +845,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
     reference_key = 'dhr' if 'dhr' in product_keys else product_keys[0]
 
     if debug:
-        print(f"[build_bboxes] product_keys={product_keys}, reference_key={reference_key}, legacy_mode={legacy_mode}")
+        logger.info(f"[build_bboxes] product_keys={product_keys}, reference_key={reference_key}, legacy_mode={legacy_mode}")
 
     collected = []
     pseudocomps_by_idx = {}
@@ -815,7 +861,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
             # Move on to the next row if comp_scan fails, for whatever reason
             if comp_scan is None:
                 if debug:
-                    print(f"[build_bboxes] idx {idx}: no reference scan ({ref_scan_col}) -> skipping")
+                    logger.info(f"[build_bboxes] idx {idx}: no reference scan ({ref_scan_col}) -> skipping")
                 continue
 
             # ### NEW: build a pseudo-composite reflectivity for Level II (or pass-through for Level III)
@@ -834,7 +880,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                 comp_scan = pseudo      # use pseudo for bbox finding
             except Exception as e:
                 if debug:
-                    print(f"[build_bboxes] idx {idx}: pseudo-composite failed ({e}); falling back to given scan")
+                    logger.info(f"[build_bboxes] idx {idx}: pseudo-composite failed ({e}); falling back to given scan")
                 pseudocomps_by_idx[idx] = None
                 comp_scan = comp_scan   # fallback (e.g., Level III single-tilt/composite)
 
@@ -844,7 +890,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
             center_lon = ((center_lon + 180.0) % 360.0) - 180.0
 
             if debug:
-                print(f"[build_bboxes] processing idx {idx} center=({center_lat:.4f},{center_lon:.4f}) using ref='{reference_key}'")
+                logger.info(f"[build_bboxes] processing idx {idx} center=({center_lat:.4f},{center_lon:.4f}) using ref='{reference_key}'")
 
             # find blob bbox using the reference composite (identical call as before)
             minlat, maxlat, minlon, maxlon, centers, info = _find_blob_for_point(
@@ -861,16 +907,15 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                 plot_stub=(f"row_{idx}_find_blob")
             )
 
-
             if minlat is None:
                 if debug:
-                    print(f"[build_bboxes] idx {idx}: _find_blob_for_point returned None -> skipping")
+                    logger.info(f"[build_bboxes] idx {idx}: _find_blob_for_point returned None -> skipping")
                 continue
 
             # NEW: per-scan bbox print
             if debug:
-                print(f"[build_bboxes] idx {idx}: per-scan bbox "
-                      f"lat [{minlat:.4f}, {maxlat:.4f}] lon [{minlon:.4f}, {maxlon:.4f}]")
+                logger.info(f"[build_bboxes] idx {idx}: per-scan bbox "
+                            f"lat [{minlat:.4f}, {maxlat:.4f}] lon [{minlon:.4f}, {maxlon:.4f}]")
 
             t_geog2xy = info['t_geog2xy']
 
@@ -889,12 +934,12 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
             })
         except Exception as e:
             if debug:
-                print(f"[build_bboxes] error idx {idx}: {e}")
+                logger.info(f"[build_bboxes] error idx {idx}: {e}")
             continue
 
     if len(collected) == 0:
         if debug:
-            print("[build_bboxes] no valid rows after scanning")
+            logger.info("[build_bboxes] no valid rows after scanning")
         cols = list(linked_df.columns) + ['min_lat', 'max_lat', 'min_lon', 'max_lon']
         return pd.DataFrame(columns=cols)
 
@@ -903,7 +948,6 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
     heights = np.array([c['maxy'] - c['miny'] for c in collected], dtype=float)
 
     avg_width_m, avg_height_m, weights = _compute_weighted_dimensions(widths, heights, debug=debug)
-
 
     # fit averaged box to first and last reference scans
     search_km = 20.0
@@ -920,7 +964,6 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
     first  = collected[0]['comp_ref']
     last   = collected[-1]['comp_ref']
 
-
     first_fit = _fit_box_to_scan_max_overlap(first, avg_width_m, avg_height_m,
                                              class_field=class_field, threshold=threshold,
                                              search_km=search_km, step_km=step_km, center_hint=first_center_hint, debug=debug)
@@ -933,18 +976,17 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
         if first_fit is not None and last_fit is not None:
             fminlat, fmaxlat, fminlon, fmaxlon = first_fit
             lminlat, lmaxlat, lminlon, lmaxlon = last_fit
-            print(f"[build_bboxes] first_fit lat [{fminlat:.4f}, {fmaxlat:.4f}] "
-                  f"lon [{fminlon:.4f}, {fmaxlon:.4f}]")
-            print(f"[build_bboxes] last_fit  lat [{lminlat:.4f}, {lmaxlat:.4f}] "
-                  f"lon [{lminlon:.4f}, {lmaxlon:.4f}]")
+            logger.info(f"[build_bboxes] first_fit lat [{fminlat:.4f}, {fmaxlat:.4f}] "
+                        f"lon [{fminlon:.4f}, {fmaxlon:.4f}]")
+            logger.info(f"[build_bboxes] last_fit  lat [{lminlat:.4f}, {lmaxlat:.4f}] "
+                        f"lon [{lminlon:.4f}, {lmaxlon:.4f}]")
         else:
-            print("[build_bboxes] first/last fit is None (will fallback to union of per-scan bboxes)")
-
+            logger.info("[build_bboxes] first/last fit is None (will fallback to union of per-scan bboxes)")
 
     # fallback -> union of per-row lon/lat extents if fit fails
     if (first_fit is None) or (last_fit is None):
         if debug:
-            print("[build_bboxes] fit failed for first/last; falling back to union of per-row lat/lon extents")
+            logger.info("[build_bboxes] fit failed for first/last; falling back to union of per-row lat/lon extents")
         all_minlat = min(c['minlat'] for c in collected)
         all_maxlat = max(c['maxlat'] for c in collected)
         all_minlon = min(c['minlon'] for c in collected)
@@ -959,7 +1001,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
         final_maxlon = max(fmaxlon, lmaxlon)
 
     if debug:
-        print(f"[build_bboxes] stationary bbox lat [{final_minlat:.4f}, {final_maxlat:.4f}] lon [{final_minlon:.4f}, {final_maxlon:.4f}]")
+        logger.info(f"[build_bboxes] stationary bbox lat [{final_minlat:.4f}, {final_maxlat:.4f}] lon [{final_minlon:.4f}, {final_maxlon:.4f}]")
 
     # crop every scan (for every product key) to the stationary bbox (apply buffer_km) and collect output rows
     out_rows = []
@@ -984,7 +1026,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                         try:
                             comp = _load_composite_pickle(pkl_path, debug=debug)
                             if debug:
-                                print(f"[build_bboxes] idx {c['idx']}: loaded comp for key={key} from cache {pkl_path}")
+                                logger.info(f"[build_bboxes] idx {c['idx']}: loaded comp for key={key} from cache {pkl_path}")
                         except Exception:
                             comp = None
 
@@ -998,7 +1040,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                         out[scan_col] = cropped
                     except Exception as e:
                         if debug:
-                            print(f"[build_bboxes] cropping fail for idx {c['idx']}, key={key}: {e}")
+                            logger.info(f"[build_bboxes] cropping fail for idx {c['idx']}, key={key}: {e}")
                         out[scan_col] = None
 
             # ### NEW: also crop and attach the pseudo-composite (built per-row from reference scan)
@@ -1011,7 +1053,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                     )
                 except Exception as e:
                     if debug:
-                        print(f"[build_bboxes] pseudo-crop fail idx {c['idx']}: {e}")
+                        logger.info(f"[build_bboxes] pseudo-crop fail idx {c['idx']}: {e}")
                     pseudo_cropped = None
             else:
                 pseudo_cropped = None
@@ -1020,11 +1062,11 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
 
         except Exception as e:
             if debug:
-                print(f"[build_bboxes] cropping fail idx {c['idx']}: {e}")
+                logger.info(f"[build_bboxes] cropping fail idx {c['idx']}: {e}")
 
     if len(out_rows) == 0:
         if debug:
-            print("[build_bboxes] no rows after final cropping")
+            logger.info("[build_bboxes] no rows after final cropping")
         cols = list(linked_df.columns) + ['min_lat', 'max_lat', 'min_lon', 'max_lon']
         return pd.DataFrame(columns=cols)
 
@@ -1098,14 +1140,14 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                 _save_plot(fig, debug_plot_dir, "build_bboxes_for_linked_df", stub, debug)
         except Exception as e:
             if debug:
-                print(f"[build_bboxes] final debug plotting failed: {e}")
+                logger.info(f"[build_bboxes] final debug plotting failed: {e}")
 
     # return DataFrame with bounding box columns
     cols = list(linked_df.columns) + ['min_lat', 'max_lat', 'min_lon', 'max_lon', 'reflectivity_composite_scan']
     cols = [c for c in cols if c in out_df.columns]
     out_df = out_df[cols]
     if debug:
-        print(f"[build_bboxes] returning out_df shape: {out_df.shape}")
-        print(out_df.head(50))
+        logger.info(f"[build_bboxes] returning out_df shape: {out_df.shape}")
+        logger.info(f"{out_df.head(50)}")
 
     return out_df

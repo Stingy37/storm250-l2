@@ -61,8 +61,9 @@ def _compute_metric_grid_and_labels(
     class_field="reflectivity",
     threshold=20,
     pad_m=5000.0,
-    grid_res_m=1000.0,  # the metric grid is ONLY used to calculate bounding box (not shipped as final product)
-                        # so a lower resolution is fine
+    grid_res_m=1000.0,  # The metric grid is ONLY used to calculate bounding box (not shipped as final product)
+                        # so a lower resolution is fine. The actual composite scan is still cropped with _fast_metric_inside_mask, 
+                        # which works in polar space and does NOT change resolution. 
     debug=False):
     """
     Map a polar composite sweep consisting of rays (azimuth degrees) and gates (range / points along the ray) to
@@ -220,74 +221,95 @@ def _compute_metric_grid_and_labels(
     }
 
 
-def _fast_metric_inside_mask(comp, minlat, maxlat, minlon, maxlon, buffer_km):
+def _fast_metric_inside_mask(
+    radar,
+    minlat, maxlat, minlon, maxlon,
+    buffer_km,
+    sweep: int | None = None,
+):
     """
     Used for cropping sweeps given bounding box lat/lon values,
-    which is calculated through converting the composite scan into a metric grid (what the bulk of geo.py is about.)
+    which is calculated through converting the composite scan into a metric grid.
 
-    Key advantage: does NOT regrid each sweep into a metric grid.
-    Instead, checks if each gate lies in the bounding box via ground-range projection. If not, mask the gate.
-    Returned shape is still (rays, gates), just with the mask applied.
+    Key advantage: does NOT regrid each sweep into a metric grid, instead crops in polar. 
+        - Checks if each gate lies in the bounding box via ground-range projection. 
+        - If not, mask the gate.
+
+    Returned shape is still (rays, gates,) keeping polar resolution, just with the mask applied.
     """
     # 1) local projection centered at radar
     try:
-        rlat = float(comp.latitude["data"]) if np.isscalar(comp.latitude["data"]) else float(comp.latitude["data"][0])
-        rlon = float(comp.longitude["data"]) if np.isscalar(comp.longitude["data"]) else float(comp.longitude["data"][0])
+        rlat = float(radar.latitude["data"]) if np.isscalar(radar.latitude["data"]) else float(radar.latitude["data"][0])
+        rlon = float(radar.longitude["data"]) if np.isscalar(radar.longitude["data"]) else float(radar.longitude["data"][0])
     except Exception:
-        # worst case: fall back to Py-ART’s georef once (still way rarer than per-crop)
-        comp.init_gate_longitude_latitude()
-        rlat = float(np.nanmean(comp.gate_latitude["data"]))
-        rlon = float(np.nanmean(comp.gate_longitude["data"]))
-    from math import radians, sin, cos, isfinite
-    t_g2x, _ = _cached_aeqd_transformers(round(rlat, 6), round(((rlon + 180) % 360) - 180, 6))
+        # worst case: fall back to Py-ART georef once
+        radar.init_gate_longitude_latitude()
+        rlat = float(np.nanmean(radar.gate_latitude["data"]))
+        rlon = float(np.nanmean(radar.gate_longitude["data"]))
 
-    # 2) bbox -> metric (use all 4 corners for safety, buffer already folded into min/max)
-    xs, ys = t_g2x.transform([minlon, minlon, maxlon, maxlon], [minlat, maxlat, minlat, maxlat])
-    minx = float(np.min(xs))
-    maxx = float(np.max(xs))
-    miny = float(np.min(ys))
-    maxy = float(np.max(ys))
+    t_g2x, _ = _cached_aeqd_transformers(
+        round(rlat, 6),
+        round(((rlon + 180) % 360) - 180, 6),
+    )
 
-    # 3) geometry vectors
-    sweep = int(getattr(comp, "metadata", {}).get("pseudo_host_sweep", 0))
-    s = int(comp.sweep_start_ray_index["data"][sweep])
-    e = int(comp.sweep_end_ray_index["data"][sweep])
+    # 2) bbox -> metric (use all 4 corners for safety; buffer already folded into min/max upstream)
+    xs, ys = t_g2x.transform(
+        [minlon, minlon, maxlon, maxlon],
+        [minlat, maxlat, minlat, maxlat],
+    )
+    minx = float(np.min(xs)); maxx = float(np.max(xs))
+    miny = float(np.min(ys)); maxy = float(np.max(ys))
 
-    az = np.asarray(comp.azimuth["data"][s:e], dtype=float)
-    el = np.asarray(comp.elevation["data"][s:e], dtype=float)
-    rng = np.asarray(comp.range["data"], dtype=float)
+    # 3) geometry vectors (choose sweep explicitly)
+    if sweep is None:
+        sweep = int(getattr(radar, "metadata", {}).get("pseudo_host_sweep", 0))
 
-    # ground-range per gate (outer product) via cos(elev)
-    elc = np.cos(np.deg2rad(el)).astype(np.float32, copy=False)  # (rays,)
-    rg = (elc[:, None] * rng[None, :]).astype(np.float32, copy=False)  # (rays, gates)
+    nsw = int(getattr(radar, "nsweeps", 0) or 0)
+    if nsw and (sweep < 0 or sweep >= nsw):
+        raise IndexError(f"_fast_metric_inside_mask: sweep={sweep} out of range [0, {nsw-1}]")
+
+    s = int(radar.sweep_start_ray_index["data"][sweep])
+    e = int(radar.sweep_end_ray_index["data"][sweep])
+
+    az  = np.asarray(radar.azimuth["data"][s:e], dtype=float)
+    el  = np.asarray(radar.elevation["data"][s:e], dtype=float)
+    rng = np.asarray(radar.range["data"], dtype=float)
+
+    # ground-range per gate via cos(elev)
+    elc = np.cos(np.deg2rad(el)).astype(np.float32, copy=False)       # (rays,)
+    rg  = (elc[:, None] * rng[None, :]).astype(np.float32, copy=False)  # (rays, gates)
 
     # 4) per-ray range bounds from rectangle
-    a = np.deg2rad(az).astype(np.float32, copy=False)
+    a  = np.deg2rad(az).astype(np.float32, copy=False)
     sa = np.sin(a)
     ca = np.cos(a)
     eps = 1e-6
 
     def bounds_1d(vmin, vmax, denom):
-        # returns (lo, hi) per ray for r given vmin <= r*denom <= vmax
         lo = np.full(denom.shape, -np.inf, dtype=np.float32)
-        hi = np.full(denom.shape, np.inf, dtype=np.float32)
-        mask = np.abs(denom) >= eps
-        q1 = (vmin / denom[mask]).astype(np.float32, copy=False)
-        q2 = (vmax / denom[mask]).astype(np.float32, copy=False)
-        lo[mask] = np.minimum(q1, q2)
-        hi[mask] = np.maximum(q1, q2)
-        # if |denom|<eps, line is x=0 or y=0; if 0 in [vmin,vmax] → no constraint; else empty
-        pass_mask = (~mask) & (vmin <= 0.0) & (0.0 <= vmax)
-        # else keep lo=-inf, hi=+inf (no solution will be filtered later by intersection)
-        # For the impossible case (0 not in [vmin,vmax]) we leave lo=-inf,hi=+inf
+        hi = np.full(denom.shape,  np.inf, dtype=np.float32)
+        good = np.abs(denom) >= eps
+
+        q1 = (vmin / denom[good]).astype(np.float32, copy=False)
+        q2 = (vmax / denom[good]).astype(np.float32, copy=False)
+        lo[good] = np.minimum(q1, q2)
+        hi[good] = np.maximum(q1, q2)
+
+        # If denom ~ 0, then r*denom ≈ 0 always.
+        # If 0 ∉ [vmin, vmax], there is no solution for that ray => force empty interval.
+        bad = ~good
+        ok_zero = (vmin <= 0.0) & (0.0 <= vmax)
+        impossible = bad & (~ok_zero)
+        lo[impossible] = np.inf
+        hi[impossible] = -np.inf
+
         return lo, hi
 
     rx_lo, rx_hi = bounds_1d(minx, maxx, sa)
     ry_lo, ry_hi = bounds_1d(miny, maxy, ca)
 
-    # intersect and clamp to r>=0
     r_lo = np.maximum(0.0, np.maximum(rx_lo, ry_lo))  # (rays,)
-    r_hi = np.minimum(rx_hi, ry_hi)  # (rays,)
+    r_hi = np.minimum(rx_hi, ry_hi)                   # (rays,)
 
     # 5) final inside mask
     inside_mask = (rg >= r_lo[:, None]) & (rg <= r_hi[:, None])

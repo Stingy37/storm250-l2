@@ -78,7 +78,7 @@ def _make_reflectivity_pseudocomposite(
         ts = [float(tsec[i]) for i in chosen]
         print(f"[_make_reflectivity_pseudocomposite] chosen sweeps={chosen.tolist()} "
               f"fixed_angles={fa} median_t[s]={ts}")
-        '''
+        
         #################################################### COMMENT PLOTTING BLOCK OUT ON PRODUCTION RUNS ###############################################################
 
         # Plot each contributing sweep (as-is in native file) for visual parity
@@ -106,8 +106,8 @@ def _make_reflectivity_pseudocomposite(
         _t_dbgplotA1 = perf_counter()
 
         ##############################################################################################################################################################
-        '''
-    # --- geometry / host sweep selection ----------------------------------------
+        
+    # -------- geometry / host sweep selection --------
     _t_host0 = perf_counter()
     rays_per_sweep, gates_per_sweep = [], []
     for i in chosen:
@@ -276,7 +276,7 @@ def _make_reflectivity_pseudocomposite(
     out_mask = ~acc_valid_any
     out_ma = _ma.MaskedArray(out_data, mask=out_mask)
     _t_finalize1 = perf_counter()
-    '''
+    
     ######################################################## COMMENT PLOTTING BLOCK OUT ON PRODUCTION RUNS ########################################################
 
     # --- DEBUG: winner map (which sweep contributed the max per gate) -----------
@@ -306,7 +306,7 @@ def _make_reflectivity_pseudocomposite(
     _t_winner1 = perf_counter()
 
     #############################################################################################################################################################
-    '''
+    
     # skeleton radar with single host sweep
     _t_skel0 = perf_counter()
     skel = radar.deepcopy() if hasattr(radar, "deepcopy") else pickle.loads(pickle.dumps(radar, -1))
@@ -360,7 +360,7 @@ def _make_reflectivity_pseudocomposite(
     skel.metadata = dict(getattr(skel, "metadata", {}) or {})
     skel.metadata["pseudo_host_sweep"] = 0
     _t_fields1 = perf_counter()
-    '''
+    
     ######################################################## COMMENT PLOTTING BLOCK OUT ON PRODUCTION RUNS ########################################################
 
     # --- DEBUG: final product sanity plots --------------------------------------
@@ -404,7 +404,7 @@ def _make_reflectivity_pseudocomposite(
     _t_dbgplotB1 = perf_counter()
 
     ################################################################################################################################################################
-    '''
+    
 
     # --------- PERF SUMMARY ------------------------------------------------------
     if debug:
