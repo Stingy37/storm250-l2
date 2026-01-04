@@ -178,10 +178,10 @@ def find_radar_scans(
           * `{k}_scan`                : Py-ART Radar object (or None if keep_in_memory=False)
           * `{k}_cache_volume_path`   : local pickle path where the Radar object is cached
                                          \- for ALL field rows resulting from a single radar volume,
-                                         this path should point to the same gz pkl file
+                                            this path should point to the same gz pkl file
           * `{k}_matched_volume_s3_key` : matched S3 object key (filename)
                                         \- for ALL field rows resulting from a single radar volume,
-                                         this path should point back to the same S3 object
+                                           this path should point back to the same S3 object
           - Note that each field gets its own columns
       - Else (no product_filter): legacy single triple:
           * 'radar_scan', 'cache_member_name', 'matched_member_name'

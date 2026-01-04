@@ -38,7 +38,7 @@ from storm250.geo import (
 from storm250.viz import _save_plot
 from storm250.composite import _make_reflectivity_pseudocomposite
 from storm250.utils import _compute_weighted_dimensions
-from storm250.io import _load_composite_pickle
+from storm250.io import _load_radar_from_skeleton_and_field_packs
 
 logger = logging.getLogger(__name__)
 
@@ -580,17 +580,24 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
     lon_max = maxlon + buffer_km * deg_per_lon_km
     _t_bbox1 = perf_counter()
 
-    # Build inside mask in metric space (no gate lon/lat)
+    # ------------- Build inside mask our composite sweep -------------
+    #  (where inside mask -> rays, gates inside bbox... still in polar )
     _t_mask0 = perf_counter()
-    inside_mask = _fast_metric_inside_mask(comp, lat_min, lat_max, lon_min, lon_max, buffer_km)
+    # get the sweep used by the composite
+    sweep = int(getattr(comp, "metadata", {}).get("pseudo_host_sweep", 0))
+    # crop the composite sweep 
+    inside_mask = _fast_metric_inside_mask(
+        comp, lat_min, lat_max, lon_min, lon_max, buffer_km,
+        sweep=sweep,
+    )
     _t_mask1 = perf_counter()
 
+    # ------------- Apply the mask to the correct rays / gates -------------
     # Compute sweep slice used by the mask
-    sweep = int(getattr(comp, "metadata", {}).get("pseudo_host_sweep", 0))
     s = int(comp.sweep_start_ray_index['data'][sweep])
     e = int(comp.sweep_end_ray_index['data'][sweep])
 
-    # Fast no-op escape
+    # Fast no-operation return if the mask contains every gate inside the sweep (should rarely happen)
     _t_noop0 = perf_counter()
     if isinstance(inside_mask, np.ndarray) and inside_mask.dtype == bool and inside_mask.all():
         if debug:
@@ -854,17 +861,28 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
         try:
             # Load the reference composite (try in-memory first, then cache)
             ref_scan_col = (f"{reference_key}_scan" if not legacy_mode else 'radar_scan')
-            ref_cache_col = (f"{reference_key}_cache_volume_path" if not legacy_mode else 'cache_member_name')
+            ref_cache_col = (f"{reference_key}_cache_volume_path" if not legacy_mode else "cache_member_name")
 
+            # try in-memory
             comp_scan = row.get(ref_scan_col, None)
 
-            # Move on to the next row if comp_scan fails, for whatever reason
+            # try rebuilding from cache
+            if comp_scan is None and not legacy_mode:
+                skel_path = row.get(ref_cache_col, None)
+                if skel_path:
+                    # For pseudo-composite, only need the reference field loaded
+                    comp_scan = _load_radar_from_skeleton_and_field_packs(
+                        skel_path,
+                        field_keys=[reference_key],
+                        debug=debug,
+                    )
+
             if comp_scan is None:
                 if debug:
-                    logger.info(f"[build_bboxes] idx {idx}: no reference scan ({ref_scan_col}) -> skipping")
+                    logger.info(f"[build_bboxes] idx {idx}: no reference scan and cannot rebuild -> skipping")
                 continue
 
-            # ### NEW: build a pseudo-composite reflectivity for Level II (or pass-through for Level III)
+            # now build a pseudo-composite reflectivity for Level II 
             try:
                 pseudo = _make_reflectivity_pseudocomposite(
                     comp_scan,
@@ -1003,53 +1021,86 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
     if debug:
         logger.info(f"[build_bboxes] stationary bbox lat [{final_minlat:.4f}, {final_maxlat:.4f}] lon [{final_minlon:.4f}, {final_maxlon:.4f}]")
 
-    # crop every scan (for every product key) to the stationary bbox (apply buffer_km) and collect output rows
+    # crop every field (for every product key) to the stationary bbox (apply buffer_km) and collect output rows
     out_rows = []
     for c in collected:
         try:
-            out = c['row'].to_dict()
-            out['min_lat'] = final_minlat
-            out['max_lat'] = final_maxlat
-            out['min_lon'] = final_minlon
-            out['max_lon'] = final_maxlon
+            out = c["row"].to_dict()
+            out["min_lat"] = final_minlat
+            out["max_lat"] = final_maxlat
+            out["min_lon"] = final_minlon
+            out["max_lon"] = final_maxlon
 
-            # For each product key present in the original linked_df, crop its comp (loading from cache if necessary)
+            # ------------------ get (or rebuild) the radar for this row ------------------
+            # note that fields and products are (essentially) the same thing 
+            radar_obj = None
+
+            # prefer in-memory radar object             /- i.e. not the comp_scan radar object, where we dump all fields except the comp 
+            # (any product key column works, since all unmodified Py-ART radar objects contain all fields)
             for key in product_keys:
-                scan_col = (f"{key}_scan" if not (legacy_mode and key == 'radar') else 'radar_scan')
-                cache_col = (f"{key}_cache_volume_path" if not (legacy_mode and key == 'radar') else 'cache_member_name')
+                scan_col = (f"{key}_scan" if not (legacy_mode and key == "radar") else "radar_scan")
+                radar_obj = out.get(scan_col, None)
+                if radar_obj is not None:
+                    break
 
-                comp = out.get(scan_col, None)
-                if comp is None:
-                    # attempt to load from cache
-                    pkl_path = out.get(cache_col, None)
-                    if pkl_path:
-                        try:
-                            comp = _load_composite_pickle(pkl_path, debug=debug)
-                            if debug:
-                                logger.info(f"[build_bboxes] idx {c['idx']}: loaded comp for key={key} from cache {pkl_path}")
-                        except Exception:
-                            comp = None
+            # if not in memory, rebuild from cache (Level II skeleton + field packs)
+            if radar_obj is None and not legacy_mode and product_keys:
+                #   /- okay to use anything, since points back to same radar object
+                any_cache_col = f"{product_keys[0]}_cache_volume_path"
+                skel_path = out.get(any_cache_col, None)
 
-                if comp is None:
-                    # no composite available for this product on this row -> keep column but set to None
+                if skel_path:
+                    radar_obj = _load_radar_from_skeleton_and_field_packs(
+                        skel_path,
+                        field_keys=product_keys,  # load all fields you plan to ship/crop
+                        debug=debug,
+                    )
+
+            # crop ONCE + assign back to per-key scan columns 
+            # \- because if we crop a full radar_obj, then EACH sweep is cropped -> contains cropped fields
+            if radar_obj is None:
+                # No radar available for this row
+                for key in product_keys:
+                    scan_col = (f"{key}_scan" if not (legacy_mode and key == "radar") else "radar_scan")
                     out[scan_col] = None
-                else:
-                    try:
-                        cropped = _crop_comp_scan_to_bbox(comp, final_minlat, final_maxlat, final_minlon, final_maxlon,
-                                                         buffer_km=buffer_km, debug=debug, inplace=True)
-                        out[scan_col] = cropped
-                    except Exception as e:
-                        if debug:
-                            logger.info(f"[build_bboxes] cropping fail for idx {c['idx']}, key={key}: {e}")
+            else:
+                try:
+                    cropped_radar = _crop_comp_scan_to_bbox(
+                        radar_obj,
+                        final_minlat, final_maxlat, final_minlon, final_maxlon,
+                        buffer_km=buffer_km,
+                        debug=debug,
+                        inplace=True,
+                    )
+
+                    # this assigns the SAME cropped Py-ART Radar object to each scan column
+                    # fields can be accessed from within 
+                    #
+                    #     out row
+                    # ├─ reflectivity_scan ─┐
+                    # ├─ velocity_scan ─────┼──► Radar object (one instance)
+                    # ├─ zdr_scan ──────────┘
+                    for key in product_keys:
+                        scan_col = (f"{key}_scan" if not (legacy_mode and key == "radar") else "radar_scan")
+                        out[scan_col] = cropped_radar
+
+                except Exception as e:
+                    if debug:
+                        logger.info(f"[build_bboxes] cropping fail idx {c['idx']}: {e}")
+                    for key in product_keys:
+                        scan_col = (f"{key}_scan" if not (legacy_mode and key == "radar") else "radar_scan")
                         out[scan_col] = None
 
-            # ### NEW: also crop and attach the pseudo-composite (built per-row from reference scan)
-            pseudo_comp = pseudocomps_by_idx.get(c['idx'], None)
+            # ------------------ also crop pseudo-composite (reflectivity_composite_scan) ------------------
+            pseudo_comp = pseudocomps_by_idx.get(c["idx"], None)
             if pseudo_comp is not None:
                 try:
                     pseudo_cropped = _crop_comp_scan_to_bbox(
-                        pseudo_comp, final_minlat, final_maxlat, final_minlon, final_maxlon,
-                        buffer_km=buffer_km, debug=debug, inplace=True
+                        pseudo_comp,
+                        final_minlat, final_maxlat, final_minlon, final_maxlon,
+                        buffer_km=buffer_km,
+                        debug=debug,
+                        inplace=True,
                     )
                 except Exception as e:
                     if debug:
@@ -1057,17 +1108,18 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                     pseudo_cropped = None
             else:
                 pseudo_cropped = None
-            out['reflectivity_composite_scan'] = pseudo_cropped  # <- NEW COLUMN
+
+            out["reflectivity_composite_scan"] = pseudo_cropped
             out_rows.append(out)
 
         except Exception as e:
             if debug:
-                logger.info(f"[build_bboxes] cropping fail idx {c['idx']}: {e}")
+                logger.info(f"[build_bboxes] fail idx {c['idx']}: {e}")
 
     if len(out_rows) == 0:
         if debug:
             logger.info("[build_bboxes] no rows after final cropping")
-        cols = list(linked_df.columns) + ['min_lat', 'max_lat', 'min_lon', 'max_lon']
+        cols = list(linked_df.columns) + ["min_lat", "max_lat", "min_lon", "max_lon"]
         return pd.DataFrame(columns=cols)
 
     out_df = pd.DataFrame(out_rows)

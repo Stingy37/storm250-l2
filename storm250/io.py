@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 PathLike = Union[str, os.PathLike]
 
 
+############################################ HELPERS ############################################
+
+
 def _as_path(p: PathLike) -> Path:
     """Normalize user path input (str/PathLike) to pathlib.Path."""
     return p if isinstance(p, Path) else Path(os.fspath(p))
@@ -108,18 +111,51 @@ def _load_field_pack(base_path: PathLike, debug: bool = False) -> Optional[dict]
         return None
 
 
-def _load_composite_pickle(pkl_path: str, debug: bool=False):
+############################################ LOADING RADAR ############################################
+
+
+_SKELETON_SUFFIX = ".skeleton.pkl.gz"
+
+def _radar_base_from_skeleton_path(skeleton_path: PathLike) -> str:
     """
-    Similar to _load_gz_pickle, except that our composite pickle hasn't been compressed yet. 
-    So, no need to first unzip with gzip. 
+    Helper to load Py-ART radar objects from cache.
+
+    Convert:
+        /.../KHGX20220322_120125_V06.skeleton.pkl.gz
+    into:
+        /.../KHGX20220322_120125_V06
+    which is the base used by field packs:
+        base + ".reflectivity".npz/.json
+        base + ".velocity".npz/.json
+        ...
     """
-    try:
-        with open(pkl_path, "rb") as fh:
-            comp = pickle.load(fh)
-        if debug:
-            print(f"[cache] loaded composite from {pkl_path}")
-        return comp
-    except Exception as e:
-        if debug:
-            print(f"[cache] failed to load pickle {pkl_path}: {e}")
+    p = str(_as_path(skeleton_path))
+    if not p.endswith(_SKELETON_SUFFIX):
+        raise ValueError(f"Not a skeleton cache path: {p}")
+    return p[: -len(_SKELETON_SUFFIX)]
+
+
+def _load_radar_from_skeleton_and_field_packs(
+    skeleton_path: PathLike,
+    field_keys: list[str],
+    *,
+    debug: bool = False,
+) -> Optional[Any]:
+    """
+    Rebuild a Py-ART Radar object from:
+      - skeleton gz-pickle (geometry-only Radar with empty fields)
+      - field pack(s) saved at base + f".{key}".npz/.json
+    """
+    radar = _load_gz_pickle(skeleton_path, debug=debug)
+    if radar is None:
         return None
+
+    base = _radar_base_from_skeleton_path(skeleton_path)
+
+    # populate requested fields (skip missing packs)
+    for k in field_keys:
+        pack = _load_field_pack(base + f".{k}", debug=debug)
+        if pack is not None:
+            radar.fields[k] = pack
+
+    return radar

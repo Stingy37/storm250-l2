@@ -235,7 +235,8 @@ def _fast_metric_inside_mask(
         - Checks if each gate lies in the bounding box via ground-range projection. 
         - If not, mask the gate.
 
-    Returned shape is still (rays, gates,) keeping polar resolution, just with the mask applied.
+    Returned shape is still (rays, gates,) keeping polar resolution, just with the mask.
+    Mask must be applied elsewhere in the pipeline. 
     """
     # 1) local projection centered at radar
     try:
