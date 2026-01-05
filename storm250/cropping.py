@@ -51,7 +51,7 @@ def _find_blob_for_point(comp_scan,
                          threshold=20,
                          min_size=2500,
                          pad_m=5000.0,
-                         grid_res_m=1000.0,
+                         grid_res_m=1000.0,         # keep the metric grid res at 1km... lower res doesn't matter since metric grid itself is never shipped
                          include_nearby_km=10.0,
                          debug=False,
                          plot_dir: str | None = None,
@@ -850,13 +850,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                                debug_plot_limit: int = 2) -> pd.DataFrame:
 
     """
-    High-level handler (minimal multi-product changes):
-      - Detect product keys in linked_df by columns that end with '_scan' (e.g. 'dhr_scan', 'dpa_scan').
-      - Choose a reference product key for bbox computation: prefer 'dhr' if present, otherwise the first product key,
-        falling back to legacy 'radar_scan' if present.
-      - Use the reference composite to run the exact same bounding logic as before.
-      - Crop EVERY product composite present in the row (for each <key>_scan) to the stationary bbox (loading from
-        <key>_cache_volume_path if needed) and store the cropped composite back in <key>_scan in the output rows.
+    High-level handler for cropping radar data based on the found stationary bbox.
     """
     # set up debug plot dir if requested
     if debug:
@@ -1224,7 +1218,10 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
             if debug:
                 logger.info(f"[build_bboxes] final debug plotting failed: {e}")
 
-    # return DataFrame with bounding box columns
+    # return DataFrame with bounding box columns, 
+    # AND our two Py-ART radar objects (pseudo_cropped, cropped_radar) that we perform cropping on
+    #       - pseudo_cropped -> Py-ART radar object JUST containing the cropped pseudo composite 
+    #       - cropped_radar  -> Py-ART radar object containing all cropped fields that we choose to keep
     cols = list(linked_df.columns) + ['min_lat', 'max_lat', 'min_lon', 'max_lon', 'reflectivity_composite_scan']
     cols = [c for c in cols if c in out_df.columns]
     out_df = out_df[cols]

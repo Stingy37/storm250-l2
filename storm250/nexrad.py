@@ -199,7 +199,7 @@ def find_radar_scans(
     def _strip_s3_prefix(b):
         return b[5:] if isinstance(b, str) and b.startswith("s3://") else b
 
-    def _s3_uri(bucket: str, key: str) -> str:
+    def _s3_url(bucket: str, key: str) -> str:
         return f"s3://{_strip_s3_prefix(bucket).rstrip('/')}/{key.lstrip('/')}"
 
     # Canonicalize product names to Py-ART Level II field keys
@@ -264,7 +264,7 @@ def find_radar_scans(
         """
         Return a list of 's3://bucket/key' paths under the prefix (no directories).
         """
-        full = _s3_uri(bucket, prefix)
+        full = _s3_url(bucket, prefix)
         out = []
         if _s3fs is not None:
             try:
@@ -284,7 +284,7 @@ def find_radar_scans(
                 paginator = _s3client.get_paginator("list_objects_v2")
                 for page in paginator.paginate(Bucket=Bucket, Prefix=Prefix):
                     for it in page.get("Contents", []):
-                        out.append(_s3_uri(Bucket, it["Key"]))
+                        out.append(_s3_url(Bucket, it["Key"]))
             except Exception as e:
                 if debug:
                     logger.info("[find_radar_scans] boto3 list_objects_v2(%s,%s) failed: %s", bucket, prefix, e)
@@ -299,7 +299,7 @@ def find_radar_scans(
         """
         import pyart
 
-        s3path = _s3_uri(bucket, key)
+        s3path = _s3_url(bucket, key)
         try:
             if _s3fs is not None:
                 # Py-ART 2.0+ reads s3:// URIs with s3fs installed

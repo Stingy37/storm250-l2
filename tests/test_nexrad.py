@@ -97,8 +97,8 @@ def test_make_radar_skeleton_is_pyart_radar_and_strips_fields(tmp_path: Path):
     )
 
     # Read one real volume (network)
-    s3_uri = f"s3://{bucket}/{key}"
-    radar = pyart.io.read_nexrad_archive(s3_uri)
+    s3_url = f"s3://{bucket}/{key}"
+    radar = pyart.io.read_nexrad_archive(s3_url)
 
     # Create the skeleton
     sk = _make_radar_skeleton(radar)
