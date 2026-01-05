@@ -1,14 +1,23 @@
+from __future__ import annotations
+
+import pickle
+from typing import Optional
+
+import numpy as np
+import numpy.ma as _ma
+import matplotlib.pyplot as _plt
+
+from storm250.viz import _save_plot
 
 def _make_reflectivity_pseudocomposite(
-    radar: "pyart.core.Radar",
+    radar,
     field_name: str = "reflectivity",
     out_field: str = "reflectivity",      # keep same so downstream class_field='reflectivity' just works
-    max_tilts: int = 3,                   # unused here but kept for signature stability
     chunk_size: int = 2048,               # rays per chunk to bound memory; None = no chunking
     debug: bool = False,
     plot_dir: str | None = None,
     plot_stub: str | None = None
-) -> "pyart.core.Radar":
+):
     """
     Build a pseudo-composite reflectivity from a subset of tilts:
       - choose all tilts to build true composite,

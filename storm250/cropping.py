@@ -918,7 +918,6 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                     comp_scan,
                     field_name=class_field,
                     out_field=class_field,     # keep same so downstream code uses class_field unchanged
-                    max_tilts=3,
                     chunk_size=2048,
                     debug=debug,
                     plot_dir=(debug_plot_dir if debug else None),
