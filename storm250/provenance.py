@@ -82,8 +82,6 @@ def build_year_manifest_and_catalog(year_dir: str,
                                     manifest_name: str = "manifest.csv",
                                     catalog_name: str = "catalog.csv",
                                     update_schema_checksums: bool = False,
-                                    # kept for backward compatibility; ignored (we never write sidecars)
-                                    write_missing_sidecars: bool = False,
                                     debug: bool = True):
     """
     Produce:
@@ -217,7 +215,6 @@ def build_year_manifest_and_catalog(year_dir: str,
             w.writerow(r)
 
     # ---------- write catalog.csv (overwrite; trimmed) ----------
-    # NOTE: drop context_relpath, context_sha256, product_files here
     catalog_path = os.path.join(year_dir, catalog_name)
     catalog_fields = [
         "site","storm_id","storm_dir",

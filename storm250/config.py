@@ -28,7 +28,11 @@ PathLike = Union[str, os.PathLike]
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "schema_version": "0.1",
+    # pointer to schema yaml 
+    "schema": {
+        "context": "storm250_context_v1.0.0"
+    },
+    
     # EBS mount mirror root (replaces /content/drive/MyDrive/... on Colab)
     "root_dir": "/data/Storm250",
 

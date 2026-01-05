@@ -23,9 +23,9 @@ def save_df_for_training(
     - H, W are determined per product within the storm by taking the maximum
       (rays, gates) across available sweeps and scans; smaller frames are NaN-padded.
     - Channels C:
-        * If comp.metadata['pseudo_host_sweep'] exists  → C = 1 (use sweep 0).
-        * Otherwise                                   → C = number of sweeps (nsweeps) in that scan.
-      The file’s C is the **maximum** channels seen across the storm for that product;
+        - If comp.metadata['pseudo_host_sweep'] exists  → C = 1 (use sweep 0).
+        - Otherwise                                   → C = number of sweeps (nsweeps) in that scan.
+      The file’s C is the maximum channels seen across the storm for that product;
       scans with fewer sweeps are padded with NaN channels.
     """
     from time import perf_counter
@@ -228,12 +228,14 @@ def save_df_for_training(
         os.makedirs(storm_dir, exist_ok=True)
 
         # ---------- write context HDF ----------
+        # context HDF -> one per storm ID, contains all (non-radar) metadata per sweep 
+        #       - no *_scan (in memory Py-ART radar) or *_cache_volume_path (points to the pickled skeleton for the field *)
         t_meta0 = perf_counter()
         context_df = sub.copy()
         drop_cols = [c for c in context_df.columns if c.endswith("_scan") or c.endswith("_cache_volume_path")]
         context_df.drop(columns=drop_cols, inplace=True, errors="ignore")
 
-        # FIX: add primary-key component time_unix_ms (UTC, int64 ms since epoch)
+        # add primary-key component time_unix_ms (UTC, int64 ms since epoch) to storm context hdf
         try:
             t_utc = pd.to_datetime(context_df[time_col], utc=True, errors="coerce")
             context_df["time_unix_ms"] = (t_utc.astype("int64") // 1_000_000)
@@ -511,9 +513,9 @@ def save_df_for_training(
                 h5.attrs["site_lat"] = float(_site_lat)
                 h5.attrs["site_lon"] = float(_site_lon)
                 h5.attrs["site_alt_m"] = float(_site_alt)
-                h5.attrs["generation_software"] = "hrss 1.0.0"
+                h5.attrs["generation_software"] = ""
                 h5.attrs["license"] = "See Zenodo record for license and citation requirements."
-                # NEW: link to context + schema (relative paths)
+                # link to context + schema (relative paths)
                 h5.attrs["context_relpath"] = context_relpath
                 h5.attrs["context_schema_relpath"] = context_schema_relpath
                 h5.attrs["context_sha256"] = str(context_sha256 or "")
@@ -590,7 +592,23 @@ def save_df_for_training(
                         "data_attrs": data_attrs_snapshot,
                     })
 
-                # ========================= WRITE FRAMES ===============================
+
+                ############################### WRITE FRAMES ###############################
+                #       (write the tensor product for each field we keep for a storm)
+                #           \- ex. reflectivity, velocity, reflectivity_composite, etc. 
+                #
+                # each tensor file for one specific field:
+                #       - /data with shape T, H, W, C
+                #           T    = number of rows (volume across time) for this field
+                #           H, W = max rays/gates seen in this field
+                #           C    = max number of sweeps for this field 
+                #       - field-specific metadata inherited from Py-ART radar object + processing steps
+                #           azimuth_deg, 
+                #           range_m, elevation_deg,
+                #           azimuth_host_sweep_index, 
+                #           bbox dimensions,
+                #           source_key (points to original nexrad s3 level 2 volume) if possible
+
                 t_write_total0 = perf_counter()
                 nan_probe_indices = {0, T-1, T//2}  # sample a few frames for NaN frac probe
 
@@ -784,7 +802,7 @@ def save_df_for_training(
         if debug:
             print(f"[save] drop scans + GC: {(t_drop1 - t_drop0)*1000:.1f} ms")
 
-    # ===== FINAL DEBUG DUMP (no file reads): tensor HDF attrs + one-row context preview =====
+    # FINAL DEBUG DUMP (no file reads): tensor HDF attrs + one-row context preview 
     if debug:
         base_abs = os.path.abspath(base_dir)
         print(f"[save] completed. Wrote context + products for {len(groups)} storm group(s) into {base_abs}")
