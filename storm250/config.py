@@ -32,7 +32,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "schema": {
         "context": "storm250_context_v1.0.0"
     },
-    
+
+    # self describing metadata about the specific dataset run
+    "dataset": {
+        "name": "storm250_level2",
+        "version": "1.0.0"
+    },
+
     # EBS mount mirror root (replaces /content/drive/MyDrive/... on Colab)
     "root_dir": "/data/Storm250",
 

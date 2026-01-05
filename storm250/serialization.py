@@ -1,3 +1,12 @@
+import os, shutil, gc, warnings, json
+from datetime import datetime
+
+import yaml
+import h5py
+import numpy as np
+import numpy.ma as ma
+import pandas as pd
+
 def save_df_for_training(
     df: pd.DataFrame,
     base_dir: str,
@@ -8,6 +17,10 @@ def save_df_for_training(
     debug: bool = True,
     scan_order: list | None = None,
     drop_scans_after_save: bool = True,
+    *,
+    dataset_version: str = "1.0.0",
+    context_schema_yaml_path: str | None = None,
+    product_schema_yaml_path: str | None = None,
 ):
     """
     Save a SEVIR-like training package per storm folder:
@@ -37,6 +50,15 @@ def save_df_for_training(
             n /= 1024.0
         return f"{n:.1f} PB"
 
+    def _load_yaml_schema(path: str | None, *, what: str) -> dict:
+        if not path:
+            raise ValueError(f"{what} schema YAML path is required.")
+        with open(path, "r", encoding="utf-8") as f:
+            d = yaml.safe_load(f) or {}
+        if "schema_version" not in d or "schema_name" not in d:
+            raise ValueError(f"{what} schema YAML must define schema_name and schema_version: {path}")
+        return d
+
     def _pretty_attr(val):
         import numpy as _np
         try:
@@ -54,23 +76,20 @@ def save_df_for_training(
         except Exception:
             return str(val)
 
-    import os, shutil, gc, warnings, json
-    from datetime import datetime
-    import numpy as np
-    import numpy.ma as ma
-    import pandas as pd
-
-    try:
-        import h5py
-    except Exception as e:
-        raise RuntimeError("h5py is required for save_df_for_training()") from e
-
     t_all0 = perf_counter()
 
     if df is None or len(df) == 0:
         if debug:
             print("[save] empty df — nothing to save.")
         return []
+
+    # ---------- load schemes from yaml file ----------
+    context_schema_base = _load_yaml_schema(context_schema_yaml_path, what="context")
+    product_schema_base = _load_yaml_schema(product_schema_yaml_path, what="product")
+
+    context_schema_version = str(context_schema_base["schema_version"])
+    product_schema_name    = str(product_schema_base["schema_name"])
+    product_schema_version = str(product_schema_base["schema_version"])
 
     # ---------- discover product prefixes ----------
     t_disc0 = perf_counter()
@@ -326,62 +345,55 @@ def save_df_for_training(
         schema_name = os.path.splitext(context_name)[0] + ".schema.json"
         schema_path = os.path.join(storm_dir, schema_name)
 
-        schema = {
-          "schema_version": "1.0.0",
-          "applies_to": context_name,
-          "applies_to_sha256": context_sha256,
-          "primary_keys": ["time_unix_ms", "storm_id", "radar_site"],
-          "columns": {
-            "time":            { "dtype": "string(ISO8601)", "unit": "UTC",                  "desc": "Analysis time (UTC)" },
-            "time_unix_ms":    { "dtype": "int64",           "unit": "ms since epoch",       "desc": "Analysis time (Unix milliseconds)" },
-            "storm_id":        { "dtype": "int32",           "unit": "",                     "desc": "Storm track identifier" },
-            "radar_site":      { "dtype": "string",          "unit": "",                     "desc": "NEXRAD site ID for radar data" },
-            "distance_to_site":{ "dtype": "float32",         "unit": "km",                   "desc": "Distance from storm to radar site" },
-            "latitude":        { "dtype": "float32",         "unit": "deg",                  "desc": "Storm centroid latitude" },
-            "longitude":       { "dtype": "float32",         "unit": "deg_east_wrap180",     "desc": "Storm centroid longitude" },
-            "u_motion":        { "dtype": "float32",         "unit": "m/s",                  "desc": "Eastward storm motion" },
-            "v_motion":        { "dtype": "float32",         "unit": "m/s",                  "desc": "Northward storm motion" },
-            "10_dbz_echo_top": { "dtype": "float32",         "unit": "km",                   "desc": "Echo top height at 10 dBZ (MSL)" },
-            "20_dbz_echo_top": { "dtype": "float32",         "unit": "km",                   "desc": "Echo top height at 20 dBZ (MSL)" },
-            "30_dbz_echo_top": { "dtype": "float32",         "unit": "km",                   "desc": "Echo top height at 30 dBZ (MSL)" },
-            "40_dbz_echo_top": { "dtype": "float32",         "unit": "km",                   "desc": "Echo top height at 40 dBZ (MSL)" },
-            "column_max_refl": { "dtype": "float32",         "unit": "dBZ",                  "desc": "Column-maximum reflectivity" },
-            "tor_count":       { "dtype": "int32",           "unit": "",                     "desc": "Instantaneous tornado count" },
-            "max_tor_intensity":{ "dtype": "int32",          "unit": "EF-scale",             "desc": "Max tornado intensity (EF-scale)" },
-            "tor_genesis":     { "dtype": "int32",           "unit": "flag",                 "desc": "Tornado genesis flag (1 if new tornado)" },
-            "tor_event":       { "dtype": "int32",           "unit": "",                     "desc": "Tornado report number (ID)" },
-            "tor_intensity":   { "dtype": "int32",           "unit": "EF-scale",             "desc": "Tornado intensity rating (EF-scale)" },
-            "tor_endtime":     { "dtype": "string",          "unit": "UTC",                  "desc": "Tornado end time (UTC)" },
-            "tor_lon":         { "dtype": "float32",         "unit": "deg_east",             "desc": "Tornado report longitude" },
-            "tor_lat":         { "dtype": "float32",         "unit": "deg",                  "desc": "Tornado report latitude" },
-            "tor_width":       { "dtype": "float32",         "unit": "yd",                   "desc": "Tornado path width (yards)" },
-            "tor_length":      { "dtype": "float32",         "unit": "mi",                   "desc": "Tornado path length (miles)" },
-            "wind_flag":       { "dtype": "int32",           "unit": "flag",                 "desc": "Severe wind report flag" },
-            "wind_event":      { "dtype": "int32",           "unit": "",                     "desc": "Wind report number (ID)" },
-            "wind_lon":        { "dtype": "float32",         "unit": "deg_east",             "desc": "Wind report longitude" },
-            "wind_lat":        { "dtype": "float32",         "unit": "deg",                  "desc": "Wind report latitude" },
-            "wind_magnitude":  { "dtype": "float32",         "unit": "mph",                  "desc": "Wind report speed (mph)" },
-            "hail_flag":       { "dtype": "int32",           "unit": "flag",                 "desc": "Severe hail report flag" },
-            "hail_event":      { "dtype": "int32",           "unit": "",                     "desc": "Hail report number (ID)" },
-            "hail_lon":        { "dtype": "float32",         "unit": "deg_east",             "desc": "Hail report longitude" },
-            "hail_lat":        { "dtype": "float32",         "unit": "deg",                  "desc": "Hail report latitude" },
-            "hail_magnitude":  { "dtype": "float32",         "unit": "in",                   "desc": "Hail report size (inches)" },
-            "reflectivity_matched_volume_s3_key": { "dtype": "string", "unit": "",            "desc": "Matched radar volume file name" },
-            "min_lat":         { "dtype": "float32",         "unit": "deg",                  "desc": "Min track latitude" },
-            "max_lat":         { "dtype": "float32",         "unit": "deg",                  "desc": "Max track latitude" },
-            "min_lon":         { "dtype": "float32",         "unit": "deg_east_wrap180",     "desc": "Min track longitude" },
-            "max_lon":         { "dtype": "float32",         "unit": "deg_east_wrap180",     "desc": "Max track longitude" }
-          }
-        }
+        # ---------- write context schema sidecar (.schema.json) ----------
+        schema_name = os.path.splitext(context_name)[0] + ".schema.json"
+        schema_path = os.path.join(storm_dir, schema_name)
+
+        # Build a sidecar that is ALWAYS aligned to the actual written context_df columns.
+        # Use YAML definitions when available; infer for unknown columns.
+        def _infer_dtype_desc(series: pd.Series) -> tuple[str, str]:
+            dt = str(series.dtype)
+            if "datetime" in dt:
+                return "datetime64", "Datetime-like column (inferred)"
+            if "int" in dt:
+                return "int", "Integer column (inferred)"
+            if "float" in dt:
+                return "float", "Float column (inferred)"
+            if "bool" in dt:
+                return "bool", "Boolean column (inferred)"
+            return "string", "String-like column (inferred)"
+
+        yaml_cols = (context_schema_base.get("columns") or {})
+        sidecar_cols = {}
+        for col in context_df.columns:
+            if col in yaml_cols:
+                sidecar_cols[col] = dict(yaml_cols[col])
+            else:
+                dtype_guess, desc_guess = _infer_dtype_desc(context_df[col])
+                sidecar_cols[col] = {
+                    "required": False,
+                    "dtype": dtype_guess,
+                    "unit": "",
+                    "desc": desc_guess,
+                }
+
+        schema_sidecar = dict(context_schema_base)
+        schema_sidecar.update({
+            "applies_to": context_name,
+            "applies_to_sha256": context_sha256,
+            "generated_at_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "columns": sidecar_cols,
+        })
 
         try:
             with open(schema_path, "w", encoding="utf-8") as f:
-                json.dump(schema, f, indent=2, sort_keys=True)
+                json.dump(schema_sidecar, f, indent=2, sort_keys=True)
             if debug:
                 print(f"[save] wrote context schema sidecar → {schema_path}")
         except Exception as e:
             if debug:
                 print(f"[save][warn] failed to write schema sidecar: {e}")
+
 
         # precompute relpaths for product HDF attrs
         # (relative from product file directory to context/schema files)
@@ -482,6 +494,7 @@ def save_df_for_training(
             # ---- open file & create datasets ----
             t_h5open0 = perf_counter()
             with h5py.File(prod_path, "w") as h5:
+                # ---- /data dataset ----
                 dset = h5.create_dataset(
                     "data",
                     shape=(T, H, W, C),
@@ -492,13 +505,38 @@ def save_df_for_training(
                     shuffle=True,
                     fillvalue=np.nan,
                 )
-                dset.attrs["units"] = str(_units)
-                dset.attrs["missing_value"] = np.nan
-                dset.attrs["valid_range"] = np.array([-30.0, 95.0], dtype="float32")
-                dset.attrs["description"] = "Reflectivity tensor with shape (T,H,W,C) = (time, rays, gates, sweeps)."
 
-                h5.attrs["dataset_version"] = "1.0.0"
-                h5.attrs["schema_version"] = "1.0.0"
+                # ---- /data attrs from product schema (plus dynamic units) ----
+                data_spec = (product_schema_base.get("datasets") or {}).get("data", {}) or {}
+                data_attrs = (data_spec.get("attrs") or {}) or {}
+
+                dset.attrs["units"] = str(_units)  # dynamic from Py-ART (do not hardcode in schema)
+                mv = data_attrs.get("missing_value", "NaN")
+                dset.attrs["missing_value"] = (np.nan if str(mv).lower() == "nan" else mv)
+
+                vr = data_attrs.get("valid_range", [-30.0, 95.0])
+                try:
+                    dset.attrs["valid_range"] = np.asarray(vr, dtype="float32")
+                except Exception:
+                    dset.attrs["valid_range"] = np.asarray([-30.0, 95.0], dtype="float32")
+
+                dset.attrs["description"] = str(
+                    data_attrs.get(
+                        "description",
+                        "Radar field tensor with shape (T,H,W,C) = (time, rays, gates, sweeps)."
+                    )
+                )
+
+                # file-level attrs: dataset + schema identity 
+                h5.attrs["dataset_version"] = str(dataset_version)
+                h5.attrs["schema_name"] = str(product_schema_base.get("schema_name", "storm250_product"))
+                h5.attrs["schema_version"] = str(product_schema_base.get("schema_version", "1.0.0"))
+
+                # apply static defaults from schema (license/source/grid_type/etc.) 
+                for k, v in (product_schema_base.get("h5_file_attrs") or {}).items():
+                    h5.attrs[k] = v
+
+                # dynamic provenance / identity attrs 
                 h5.attrs["radar_site"] = str(site)
                 h5.attrs["storm_id"] = str(storm)
                 h5.attrs["year"] = int(yr)
@@ -506,20 +544,18 @@ def save_df_for_training(
                 h5.attrs["shape_T_H_W_C"] = (int(T), int(H), int(W), int(C))
                 if chosen_field:
                     h5.attrs["field_key"] = str(chosen_field)
-                h5.attrs["source_system"] = "NEXRAD Level-II"
-                h5.attrs["grid_type"] = "polar_host_reindexed"
+
                 h5.attrs["channels_are_sweeps"] = (not _is_pseudo_any)
                 h5.attrs["composite_method"] = "MAX_ALL_SWEEPS" if _is_pseudo_any else "NONE"
+
                 h5.attrs["site_lat"] = float(_site_lat)
                 h5.attrs["site_lon"] = float(_site_lon)
                 h5.attrs["site_alt_m"] = float(_site_alt)
-                h5.attrs["generation_software"] = ""
-                h5.attrs["license"] = "See Zenodo record for license and citation requirements."
-                # link to context + schema (relative paths)
+
+                # link to context + schema sidecar
                 h5.attrs["context_relpath"] = context_relpath
                 h5.attrs["context_schema_relpath"] = context_schema_relpath
                 h5.attrs["context_sha256"] = str(context_sha256 or "")
-
 
                 # time vectors
                 try:

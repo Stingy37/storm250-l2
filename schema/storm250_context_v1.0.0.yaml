@@ -1,0 +1,270 @@
+schema_name: storm250_context
+schema_version: "1.0.0"
+kind: context_table
+description: >
+  Per-storm context table keyed by time, storm_id, and radar_site. Contains storm
+  motion, bbox, echo tops, and optionally matched severe reports.
+
+primary_keys:
+  - time_unix_ms
+  - storm_id
+  - radar_site
+
+time_columns:
+  time:
+    dtype: string
+    format: ISO8601
+    timezone: UTC
+  time_unix_ms:
+    dtype: int64
+    unit: ms_since_epoch
+    timezone: UTC
+
+normalization:
+  longitude_wrap180_columns:
+    - longitude
+    - tor_lon
+    - wind_lon
+    - hail_lon
+    - min_lon
+    - max_lon
+  tor_endtime:
+    empty_values: ["", "-", "—", "–", "None", "NA", "nan", "--------------"]
+    output_format: ISO8601_UTC_or_empty_string
+
+allow_extra_columns: true
+
+columns:
+  time:
+    required: true
+    dtype: string(ISO8601)
+    unit: UTC
+    desc: Analysis time (UTC)
+
+  time_unix_ms:
+    required: true
+    dtype: int64
+    unit: ms since epoch
+    desc: Analysis time (Unix milliseconds)
+
+  storm_id:
+    required: true
+    dtype: int32
+    unit: ""
+    desc: Storm track identifier
+
+  radar_site:
+    required: true
+    dtype: string
+    unit: ""
+    desc: NEXRAD site ID for radar data
+
+  distance_to_site:
+    required: false
+    dtype: float32
+    unit: km
+    desc: Distance from storm to radar site
+
+  latitude:
+    required: true
+    dtype: float32
+    unit: deg
+    desc: Storm centroid latitude
+
+  longitude:
+    required: true
+    dtype: float32
+    unit: deg_east_wrap180
+    desc: Storm centroid longitude wrapped to [-180, 180)
+
+  u_motion:
+    required: false
+    dtype: float32
+    unit: m/s
+    desc: Eastward storm motion
+
+  v_motion:
+    required: false
+    dtype: float32
+    unit: m/s
+    desc: Northward storm motion
+
+  10_dbz_echo_top:
+    required: false
+    dtype: float32
+    unit: km
+    desc: Echo top height at 10 dBZ (MSL)
+
+  20_dbz_echo_top:
+    required: false
+    dtype: float32
+    unit: km
+    desc: Echo top height at 20 dBZ (MSL)
+
+  30_dbz_echo_top:
+    required: false
+    dtype: float32
+    unit: km
+    desc: Echo top height at 30 dBZ (MSL)
+
+  40_dbz_echo_top:
+    required: false
+    dtype: float32
+    unit: km
+    desc: Echo top height at 40 dBZ (MSL)
+
+  column_max_refl:
+    required: false
+    dtype: float32
+    unit: dBZ
+    desc: Column-maximum reflectivity
+
+  tor_count:
+    required: false
+    dtype: int32
+    unit: ""
+    desc: Instantaneous tornado count
+
+  max_tor_intensity:
+    required: false
+    dtype: int32
+    unit: EF-scale
+    desc: Max tornado intensity (EF-scale)
+
+  tor_genesis:
+    required: false
+    dtype: int32
+    unit: flag
+    desc: Tornado genesis flag (1 if new tornado)
+
+  tor_event:
+    required: false
+    dtype: int32
+    unit: ""
+    desc: Tornado report number (ID)
+
+  tor_intensity:
+    required: false
+    dtype: int32
+    unit: EF-scale
+    desc: Tornado intensity rating (EF-scale)
+
+  tor_endtime:
+    required: false
+    dtype: string
+    unit: UTC
+    desc: Tornado end time (UTC) as ISO8601 or "" if unknown
+
+  tor_lon:
+    required: false
+    dtype: float32
+    unit: deg_east_wrap180
+    desc: Tornado report longitude wrapped to [-180, 180)
+
+  tor_lat:
+    required: false
+    dtype: float32
+    unit: deg
+    desc: Tornado report latitude
+
+  tor_width:
+    required: false
+    dtype: float32
+    unit: yd
+    desc: Tornado path width (yards)
+
+  tor_length:
+    required: false
+    dtype: float32
+    unit: mi
+    desc: Tornado path length (miles)
+
+  wind_flag:
+    required: false
+    dtype: int32
+    unit: flag
+    desc: Severe wind report flag
+
+  wind_event:
+    required: false
+    dtype: int32
+    unit: ""
+    desc: Wind report number (ID)
+
+  wind_lon:
+    required: false
+    dtype: float32
+    unit: deg_east_wrap180
+    desc: Wind report longitude wrapped to [-180, 180)
+
+  wind_lat:
+    required: false
+    dtype: float32
+    unit: deg
+    desc: Wind report latitude
+
+  wind_magnitude:
+    required: false
+    dtype: float32
+    unit: mph
+    desc: Wind report speed (mph)
+
+  hail_flag:
+    required: false
+    dtype: int32
+    unit: flag
+    desc: Severe hail report flag
+
+  hail_event:
+    required: false
+    dtype: int32
+    unit: ""
+    desc: Hail report number (ID)
+
+  hail_lon:
+    required: false
+    dtype: float32
+    unit: deg_east_wrap180
+    desc: Hail report longitude wrapped to [-180, 180)
+
+  hail_lat:
+    required: false
+    dtype: float32
+    unit: deg
+    desc: Hail report latitude
+
+  hail_magnitude:
+    required: false
+    dtype: float32
+    unit: in
+    desc: Hail report size (inches)
+
+  reflectivity_matched_volume_s3_key:
+    required: false
+    dtype: string
+    unit: ""
+    desc: Matched radar volume file key/name for reflectivity
+
+  min_lat:
+    required: true
+    dtype: float32
+    unit: deg
+    desc: Bounding box minimum latitude
+
+  max_lat:
+    required: true
+    dtype: float32
+    unit: deg
+    desc: Bounding box maximum latitude
+
+  min_lon:
+    required: true
+    dtype: float32
+    unit: deg_east_wrap180
+    desc: Bounding box minimum longitude wrapped to [-180, 180)
+
+  max_lon:
+    required: true
+    dtype: float32
+    unit: deg_east_wrap180
+    desc: Bounding box maximum longitude wrapped to [-180, 180)

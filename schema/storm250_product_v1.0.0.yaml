@@ -1,0 +1,137 @@
+schema_name: storm250_product
+schema_version: "1.0.0"
+kind: product_tensor_hdf5
+description: >
+  Per-storm tensor package for one radar product prefix. Stores /data (T,H,W,C)
+  plus geometry vectors and bbox arrays aligned with time.
+
+compression_defaults:
+  method: gzip
+  level: 4
+  shuffle: true
+
+h5_file_attrs:
+  source_system: "NEXRAD Level-II"
+  grid_type: "polar_host_reindexed"
+  license: "See Zenodo record for license and citation requirements."
+
+required_h5_attrs:
+  - dataset_version
+  - schema_name
+  - schema_version
+  - radar_site
+  - storm_id
+  - year
+  - product_prefix
+  - shape_T_H_W_C
+  - field_key
+  - channels_are_sweeps
+  - composite_method
+  - site_lat
+  - site_lon
+  - site_alt_m
+  - context_relpath
+  - context_schema_relpath
+  - context_sha256
+
+datasets:
+  data:
+    path: /data
+    dtype: float32
+    dims: [T, H, W, C]
+    fill_value: NaN
+    attrs:
+      missing_value: NaN
+      valid_range: [-30.0, 95.0]
+      description: >
+        Radar field tensor with shape (T,H,W,C) = (time, rays, gates, sweeps).
+      unit_source: "pyart_field_units_or_fallback"
+
+  time:
+    path: /time
+    dtype: bytes
+    dims: [T]
+    attrs:
+      format: ISO8601_UTC
+
+  time_unix_ms:
+    path: /time_unix_ms
+    dtype: int64
+    dims: [T]
+    attrs:
+      unit: ms_since_epoch
+      timezone: UTC
+
+  azimuth_deg:
+    path: /azimuth_deg
+    dtype: float32
+    dims: [T, H]
+    fill_value: NaN
+    attrs:
+      unit: deg
+      desc: Host-sweep azimuth per time index (degrees)
+
+  range_m:
+    path: /range_m
+    dtype: float32
+    dims: [T, W]
+    fill_value: NaN
+    attrs:
+      unit: m
+      desc: Range gates (meters)
+
+  elevation_deg:
+    path: /elevation_deg
+    dtype: float32
+    dims: [T, C]
+    fill_value: NaN
+    attrs:
+      unit: deg
+      desc: Fixed angles per sweep/channel (degrees)
+
+  azimuth_host_sweep_index:
+    path: /azimuth_host_sweep_index
+    dtype: int16
+    dims: [T]
+    attrs:
+      desc: Index of the host sweep used for ray reindexing
+
+  bbox_min_lat:
+    path: /bbox_min_lat
+    dtype: float32
+    dims: [T]
+    attrs:
+      unit: deg
+      desc: Bounding box min latitude (per time)
+
+  bbox_max_lat:
+    path: /bbox_max_lat
+    dtype: float32
+    dims: [T]
+    attrs:
+      unit: deg
+      desc: Bounding box max latitude (per time)
+
+  bbox_min_lon:
+    path: /bbox_min_lon
+    dtype: float32
+    dims: [T]
+    attrs:
+      unit: deg_east_wrap180
+      desc: Bounding box min longitude (per time)
+
+  bbox_max_lon:
+    path: /bbox_max_lon
+    dtype: float32
+    dims: [T]
+    attrs:
+      unit: deg_east_wrap180
+      desc: Bounding box max longitude (per time)
+
+  source_key:
+    path: /source_key
+    dtype: vlen_string
+    dims: [T]
+    optional: true
+    attrs:
+      desc: Source volume identifier (e.g., NEXRAD S3 key) aligned with time
