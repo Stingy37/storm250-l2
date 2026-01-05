@@ -551,90 +551,33 @@ def _fit_box_to_scan_max_overlap(comp_scan,
     return best_box  # minlat, maxlat, minlon, maxlon
 
 
-def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
-                            buffer_km=5.0, debug=False, inplace=True,
-                            drop_gate_coords=True, prefer_nan_fill=True):
-    """
-    In-place crop via masking (or NaN-fill) outside bbox+buffer, optimized for speed & bandwidth:
-      - builds the inside mask in *metric space* (no gate lon/lat fetch),
-      - early exit if the mask keeps everything,
-      - applies masks per-sweep slice if fields span all sweeps,
-      - reuse a single shared mask across fields,
-      - avoid array-wide dtype casts/writes for non-floating fields.
-    """
-    _t0 = perf_counter()
-
-    # Copy vs in-place
-    _t_copy0 = perf_counter()
-    comp = comp_scan if inplace else copy.deepcopy(comp_scan)
-    _t_copy1 = perf_counter()
-
-    # Bbox + buffer (deg)
-    _t_bbox0 = perf_counter()
+def _bbox_with_buffer_deg(minlat, maxlat, minlon, maxlon, buffer_km: float):
+    """Return (lat_min, lat_max, lon_min, lon_max) expanded by buffer_km (approx deg conversion)."""
     deg_per_lat_km = 1.0 / 110.574
     midlat = (minlat + maxlat) * 0.5
     deg_per_lon_km = 1.0 / (111.320 * np.cos(np.deg2rad(midlat))) if np.isfinite(midlat) else (1.0 / 111.320)
+
     lat_min = minlat - buffer_km * deg_per_lat_km
     lat_max = maxlat + buffer_km * deg_per_lat_km
     lon_min = minlon - buffer_km * deg_per_lon_km
     lon_max = maxlon + buffer_km * deg_per_lon_km
-    _t_bbox1 = perf_counter()
+    return lat_min, lat_max, lon_min, lon_max
 
-    # ------------- Build inside mask our composite sweep -------------
-    #  (where inside mask -> rays, gates inside bbox... still in polar )
-    _t_mask0 = perf_counter()
-    # get the sweep used by the composite
-    sweep = int(getattr(comp, "metadata", {}).get("pseudo_host_sweep", 0))
-    # crop the composite sweep 
-    inside_mask = _fast_metric_inside_mask(
-        comp, lat_min, lat_max, lon_min, lon_max, buffer_km,
-        sweep=sweep,
-    )
-    _t_mask1 = perf_counter()
 
-    # ------------- Apply the mask to the correct rays / gates -------------
-    # Compute sweep slice used by the mask
-    s = int(comp.sweep_start_ray_index['data'][sweep])
-    e = int(comp.sweep_end_ray_index['data'][sweep])
+def _apply_mask_to_fields_for_sweep_slice(
+    radar,
+    *,
+    s: int,
+    e: int,
+    mask_outside: np.ndarray,   # shape (e-s, ngates)
+    prefer_nan_fill: bool,
+    shared_bcast: dict,
+):
+    """
+    Apply mask_outside to radar.fields in-place for rays [s:e, :].
+    """
+    gate_shape = mask_outside.shape  # (e-s, ngates)
 
-    # Fast no-operation return if the mask contains every gate inside the sweep (should rarely happen)
-    _t_noop0 = perf_counter()
-    if isinstance(inside_mask, np.ndarray) and inside_mask.dtype == bool and inside_mask.all():
-        if debug:
-            try:
-                rays = e - s
-            except Exception:
-                rays = inside_mask.shape[0] if inside_mask.ndim == 2 else -1
-            try:
-                gates = int(np.asarray(comp.range['data']).size)
-            except Exception:
-                gates = inside_mask.shape[1] if inside_mask.ndim == 2 else -1
-            logger.info(f"[_crop_comp_scan_to_bbox] dims: rays={rays} gates={gates} fields={len(getattr(comp, 'fields', {}))} "
-                        f"inplace={bool(inplace)} prefer_nan_fill={bool(prefer_nan_fill)} drop_gate_coords={bool(drop_gate_coords)}")
-            logger.info(f"    copy/deepcopy:        {(_t_copy1 - _t_copy0)*1000:.1f} ms")
-            logger.info(f"    bbox math:            {(_t_bbox1 - _t_bbox0)*1000:.1f} ms")
-            logger.info(f"    compute metric mask:  {(_t_mask1 - _t_mask0)*1000:.1f} ms")
-            logger.info(f"    no-op check:          {(perf_counter() - _t_noop0)*1000:.1f} ms")
-            logger.info(f"    TOTAL:                {(perf_counter() - _t0   )*1000:.1f} ms")
-            logger.info("[_crop_comp_scan_to_bbox] bbox covers full radar -> no-op (metric mask all True)")
-        return comp
-    _t_noop1 = perf_counter()
-
-    # Turn inside→outside (shared mask)
-    _t_inv0 = perf_counter()
-    np.logical_not(inside_mask, out=inside_mask)
-    mask_outside = inside_mask
-    _t_inv1 = perf_counter()
-
-    gate_shape = mask_outside.shape  # = (e-s, ngates)
-    shared_bcast = {}
-
-    # Per-field timing accumulators
-    _t_fields0 = perf_counter()
-    n_fields = 0; n_masked = 0; n_float = 0; n_intbool = 0
-    t_masked_merge = 0.0; t_float_fill = 0.0; t_int_wrap = 0.0; t_bcast_build = 0.0
-
-    # Helper: apply mask to a MaskedArray that spans *all* rays (slice [s:e,:])
     def _merge_mask_slice(arr_ma, mask_slice):
         # Prepare a full-size mask (only slice gets OR-ed with mask_slice)
         if (arr_ma.mask is np.ma.nomask) or (arr_ma.mask is False):
@@ -651,16 +594,13 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
         np.logical_or(full[s:e, :], mask_slice, out=full[s:e, :])
         arr_ma.mask = full
 
-    for fname, fdict in comp.fields.items():
+    for _, fdict in radar.fields.items():
         arr = fdict.get("data", None)
         if arr is None:
             continue
-        n_fields += 1
-        _t_one0 = perf_counter()
 
         # -------- MaskedArray fields --------
         if isinstance(arr, np.ma.MaskedArray):
-            n_masked += 1
             if arr.ndim == 2 and arr.shape == gate_shape:
                 # exact per-sweep array
                 if (arr.mask is np.ma.nomask) or (arr.mask is False):
@@ -669,9 +609,10 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
                     if isinstance(arr.mask, np.ndarray) and arr.mask.shape == gate_shape:
                         np.logical_or(arr.mask, mask_outside, out=arr.mask)
                     else:
-                        real = mask_outside.copy(order='C')
+                        real = mask_outside.copy(order="C")
                         np.logical_or(real, arr.mask, out=real)
                         arr.mask = real
+                # normalize dtype if possible
                 try:
                     if arr.dtype != np.float32:
                         arr._data = arr._data.astype(np.float32, copy=False)
@@ -690,13 +631,10 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
                 fdict["data"] = arr
 
             else:
-                # other shapes -> try broadcast (may be rare)
+                # other shapes -> broadcast (rare)
                 if arr.shape not in shared_bcast:
-                    _tb0 = perf_counter()
-                    bm = np.broadcast_to(mask_outside, arr.shape).copy(order='C')
-                    _tb1 = perf_counter()
+                    bm = np.broadcast_to(mask_outside, arr.shape).copy(order="C")
                     shared_bcast[arr.shape] = bm
-                    t_bcast_build += (_tb1 - _tb0)
                 bm = shared_bcast[arr.shape]
                 if (arr.mask is np.ma.nomask) or (arr.mask is False):
                     arr.mask = bm
@@ -704,7 +642,7 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
                     if isinstance(arr.mask, np.ndarray) and arr.mask.shape == arr.shape:
                         np.logical_or(arr.mask, bm, out=arr.mask)
                     else:
-                        real = bm.copy(order='C')
+                        real = bm.copy(order="C")
                         np.logical_or(real, arr.mask, out=real)
                         arr.mask = real
                 try:
@@ -714,97 +652,189 @@ def _crop_comp_scan_to_bbox(comp_scan, minlat, maxlat, minlon, maxlon,
                     pass
                 fdict["data"] = arr
 
-            t_masked_merge += (perf_counter() - _t_one0)
             continue
 
         # -------- Plain ndarray fields --------
         if prefer_nan_fill and np.issubdtype(arr.dtype, np.floating):
-            n_float += 1
-            _tf0 = perf_counter()
             if arr.dtype != np.float32:
                 arr = arr.astype(np.float32, copy=False)
 
             if arr.ndim == 2 and arr.shape == gate_shape:
-                # per-sweep
                 np.copyto(arr, np.nan, where=mask_outside)
             elif arr.ndim == 2 and arr.shape[1] == gate_shape[1] and e <= arr.shape[0]:
-                # full-radar: slice
                 np.copyto(arr[s:e, :], np.nan, where=mask_outside)
             else:
-                # fallback broadcast (rare)
                 bm = shared_bcast.get(arr.shape)
                 if bm is None:
-                    _tb0 = perf_counter()
-                    bm = np.broadcast_to(mask_outside, arr.shape).copy(order='C')
-                    _tb1 = perf_counter()
+                    bm = np.broadcast_to(mask_outside, arr.shape).copy(order="C")
                     shared_bcast[arr.shape] = bm
-                    t_bcast_build += (_tb1 - _tb0)
                 np.copyto(arr, np.nan, where=bm)
 
             fdict["data"] = arr
-            t_float_fill += (perf_counter() - _tf0)
         else:
-            n_intbool += 1
-            _ti0 = perf_counter()
             if arr.ndim == 2 and arr.shape == gate_shape:
                 fdict["data"] = _ma.MaskedArray(arr, mask=mask_outside, copy=False)
             elif arr.ndim == 2 and arr.shape[1] == gate_shape[1] and e <= arr.shape[0]:
-                # full array -> build a full-size mask and fill only [s:e, :]
                 bm_full = np.zeros(arr.shape, dtype=bool)
                 bm_full[s:e, :] = mask_outside
                 fdict["data"] = _ma.MaskedArray(arr, mask=bm_full, copy=False)
             else:
                 bm = shared_bcast.get(arr.shape)
                 if bm is None:
-                    _tb0 = perf_counter()
-                    bm = np.broadcast_to(mask_outside, arr.shape).copy(order='C')
-                    _tb1 = perf_counter()
+                    bm = np.broadcast_to(mask_outside, arr.shape).copy(order="C")
                     shared_bcast[arr.shape] = bm
-                    t_bcast_build += (_tb1 - _tb0)
                 fdict["data"] = _ma.MaskedArray(arr, mask=bm, copy=False)
-            t_int_wrap += (perf_counter() - _ti0)
 
-    _t_fields1 = perf_counter()
 
-    # Optional: drop large cached geo arrays if desired
-    _t_drop0 = perf_counter()
+def _crop_one_sweep_to_bbox_inplace(
+    radar,
+    *,
+    sweep: int,
+    lat_min: float,
+    lat_max: float,
+    lon_min: float,
+    lon_max: float,
+    buffer_km: float,
+    debug: bool,
+    prefer_nan_fill: bool,
+):
+    """
+    Crop ONE sweep (by masking outside bbox) in-place.
+    Returns True if any masking work was actually applied, False if it was a no-op (mask all True).
+    """
+    inside_mask = _fast_metric_inside_mask(
+        radar, lat_min, lat_max, lon_min, lon_max, buffer_km,
+        sweep=sweep,
+    )
+
+    s = int(radar.sweep_start_ray_index["data"][sweep])
+    e = int(radar.sweep_end_ray_index["data"][sweep])
+
+    # if sweep fully inside bbox: no-op for this sweep
+    if isinstance(inside_mask, np.ndarray) and inside_mask.dtype == bool and inside_mask.all():
+        return False
+
+    # outside mask (shared shape = (e-s, ngates))
+    np.logical_not(inside_mask, out=inside_mask)
+    mask_outside = inside_mask
+
+    shared_bcast = {}  # per-sweep (keeps memory bounded)
+    _apply_mask_to_fields_for_sweep_slice(
+        radar,
+        s=s,
+        e=e,
+        mask_outside=mask_outside,
+        prefer_nan_fill=prefer_nan_fill,
+        shared_bcast=shared_bcast,
+    )
+    return True
+
+def _crop_pseudocomp_scan_to_bbox(
+    comp_scan,
+    minlat, maxlat, minlon, maxlon,
+    *,
+    buffer_km=5.0,
+    debug=False,
+    inplace=True,
+    drop_gate_coords=True,
+    prefer_nan_fill=True,
+):
+    """
+    Crop ONLY the pseudo-composite host sweep (pseudo_host_sweep).
+    Intended for the pseudo-composite Radar object returned by _make_reflectivity_pseudocomposite.
+    """
+    _t0 = perf_counter()
+    radar = comp_scan if inplace else copy.deepcopy(comp_scan)
+
+    lat_min, lat_max, lon_min, lon_max = _bbox_with_buffer_deg(minlat, maxlat, minlon, maxlon, buffer_km)
+
+    sweep = int(getattr(radar, "metadata", {}).get("pseudo_host_sweep", 0))
+
+    # Mutates radar object in place, so _crop_one_sweep_to_bbox_inplace
+    # doesn't need to return a new radar. Instead, return a boolean we can use for debugging. 
+    #               \- radar object in scope here already has changes made to it. 
+    changed = _crop_one_sweep_to_bbox_inplace(
+        radar,
+        sweep=sweep,
+        lat_min=lat_min, lat_max=lat_max, lon_min=lon_min, lon_max=lon_max,
+        buffer_km=buffer_km,
+        debug=debug,
+        prefer_nan_fill=prefer_nan_fill,
+    )
+
     if drop_gate_coords:
         for gate_key in ("gate_longitude", "gate_latitude", "gate_altitude"):
-            try: delattr(comp, gate_key)
-            except Exception: pass
-    _t_drop1 = perf_counter()
-
-    # Clear locals
-    _t_clean0 = perf_counter()
-    try: del mask_outside, inside_mask
-    except Exception: pass
-    _t_clean1 = perf_counter()
+            try:
+                delattr(radar, gate_key)
+            except Exception:
+                pass
 
     if debug:
-        rays = e - s
+        logger.info(
+            f"[_crop_pseudocomp_scan_to_bbox] sweep={sweep} changed={bool(changed)} "
+            f"TOTAL={(perf_counter()-_t0)*1000:.1f} ms"
+        )
+    return radar
+
+def _crop_radar_volume_to_bbox(
+    radar_obj,
+    minlat, maxlat, minlon, maxlon,
+    *,
+    buffer_km=5.0,
+    debug=False,
+    inplace=True,
+    drop_gate_coords=True,
+    prefer_nan_fill=True,
+    sweeps: list[int] | None = None,
+):
+    """
+    Crop ALL sweeps (or a specified subset) of a normal Py-ART Radar volume in-place.
+    This is what you want for shipping cropped sweeps/fields.
+    """
+    _t0 = perf_counter()
+    radar = radar_obj if inplace else copy.deepcopy(radar_obj)
+
+    lat_min, lat_max, lon_min, lon_max = _bbox_with_buffer_deg(minlat, maxlat, minlon, maxlon, buffer_km)
+
+    nsweeps = int(np.asarray(radar.sweep_number["data"]).size)
+    sweep_list = sweeps if sweeps is not None else list(range(nsweeps))
+
+    any_changed = False
+    n_noop = 0
+
+    for sw in sweep_list:
         try:
-            gates = int(np.asarray(comp.range['data']).size)
-        except Exception:
-            gates = gate_shape[1] if isinstance(gate_shape, tuple) and len(gate_shape) >= 2 else -1
+            changed = _crop_one_sweep_to_bbox_inplace(
+                radar,
+                sweep=int(sw),
+                lat_min=lat_min, lat_max=lat_max, lon_min=lon_min, lon_max=lon_max,
+                buffer_km=buffer_km,
+                debug=debug,
+                prefer_nan_fill=prefer_nan_fill,
+            )
+            if changed:
+                any_changed = True
+            else:
+                n_noop += 1
+        except Exception as e:
+            if debug:
+                logger.info(f"[_crop_radar_volume_to_bbox] sweep {sw} failed: {e}")
 
-        logger.info(f"[_crop_comp_scan_to_bbox] dims: rays={rays} gates={gates} fields={n_fields} "
-                    f"inplace={bool(inplace)} prefer_nan_fill={bool(prefer_nan_fill)} drop_gate_coords={bool(drop_gate_coords)}")
-        logger.info(f"    copy/deepcopy:        {(_t_copy1  - _t_copy0 )*1000:.1f} ms")
-        logger.info(f"    bbox math:            {(_t_bbox1  - _t_bbox0 )*1000:.1f} ms")
-        logger.info(f"    compute metric mask:  {(_t_mask1  - _t_mask0 )*1000:.1f} ms")
-        logger.info(f"    no-op check:          {(_t_noop1  - _t_noop0 )*1000:.1f} ms")
-        logger.info(f"    invert to outside:    {(_t_inv1   - _t_inv0  )*1000:.1f} ms")
-        logger.info(f"    per-field apply:      {(_t_fields1- _t_fields0)*1000:.1f} ms")
-        logger.info(f"        masked merge (n={n_masked}):   {t_masked_merge*1000:.1f} ms")
-        logger.info(f"        float NaN fill (n={n_float}):  {t_float_fill*1000:.1f} ms")
-        logger.info(f"        int/bool wrap (n={n_intbool}): {t_int_wrap*1000:.1f} ms")
-        logger.info(f"        broadcast builds:               {t_bcast_build*1000:.1f} ms")
-        logger.info(f"    drop gate coords:     {(_t_drop1  - _t_drop0 )*1000:.1f} ms")
-        logger.info(f"    cleanup locals:       {(_t_clean1 - _t_clean0)*1000:.1f} ms")
-        logger.info(f"    TOTAL:                {(perf_counter() - _t0   )*1000:.1f} ms")
-        logger.info(f"[_crop_comp_scan_to_bbox] cropped to {minlat:.4f}-{maxlat:.4f}, {minlon:.4f}-{maxlon:.4f} (buffer_km={buffer_km})")
+    if drop_gate_coords:
+        for gate_key in ("gate_longitude", "gate_latitude", "gate_altitude"):
+            try:
+                delattr(radar, gate_key)
+            except Exception:
+                pass
 
-    return comp
+    if debug:
+        logger.info(
+            f"[_crop_radar_volume_to_bbox] sweeps={len(sweep_list)}/{nsweeps} "
+            f"changed={bool(any_changed)} noop_sweeps={n_noop} "
+            f"TOTAL={(perf_counter()-_t0)*1000:.1f} ms"
+        )
+
+    return radar
 
 
 def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
@@ -1065,7 +1095,7 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                     out[scan_col] = None
             else:
                 try:
-                    cropped_radar = _crop_comp_scan_to_bbox(
+                    cropped_radar = _crop_radar_volume_to_bbox(
                         radar_obj,
                         final_minlat, final_maxlat, final_minlon, final_maxlon,
                         buffer_km=buffer_km,
@@ -1091,11 +1121,12 @@ def build_bboxes_for_linked_df(linked_df: pd.DataFrame,
                         scan_col = (f"{key}_scan" if not (legacy_mode and key == "radar") else "radar_scan")
                         out[scan_col] = None
 
-            # ------------------ also crop pseudo-composite (reflectivity_composite_scan) ------------------
+            # ------------------ crop pseudo-composite (reflectivity_composite_scan) ------------------
+            # pseudo-composite is also included as a product that we ship 
             pseudo_comp = pseudocomps_by_idx.get(c["idx"], None)
             if pseudo_comp is not None:
                 try:
-                    pseudo_cropped = _crop_comp_scan_to_bbox(
+                    pseudo_cropped = _crop_pseudocomp_scan_to_bbox(
                         pseudo_comp,
                         final_minlat, final_maxlat, final_minlon, final_maxlon,
                         buffer_km=buffer_km,
