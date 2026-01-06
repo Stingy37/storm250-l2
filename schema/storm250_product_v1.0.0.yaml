@@ -42,7 +42,6 @@ datasets:
     fill_value: NaN
     attrs:
       missing_value: NaN
-      valid_range: [-30.0, 95.0]
       description: >
         Radar field tensor with shape (T,H,W,C) = (time, rays, gates, sweeps).
       unit_source: "pyart_field_units_or_fallback"

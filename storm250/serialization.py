@@ -43,6 +43,26 @@ def save_df_for_training(
     """
     from time import perf_counter
 
+
+    def _apply_dataset_attrs(dset_obj, name: str):
+        """
+        Copy yaml attributes into HDF attributes. 
+        
+        Allows a user to check the meaning of a value in hdf (ex. f["azimuth_deg"].attrs)
+        without looking ay yaml file, while still keeping yaml file as single point of truth;
+        yaml is copied into HDF attributes.
+        """
+        spec = (product_schema_base.get("datasets") or {}).get(name, {}) or {}
+        attrs = (spec.get("attrs") or {}) or {}
+        for k, v in attrs.items():
+            dset_obj.attrs[k] = v
+        def _fmt_bytes(n: int) -> str:
+            for unit in ["B", "KB", "MB", "GB", "TB"]:
+                if abs(n) < 1024.0:
+                    return f"{n:.1f} {unit}"
+                n /= 1024.0
+            return f"{n:.1f} PB"
+    
     def _fmt_bytes(n: int) -> str:
         for unit in ["B", "KB", "MB", "GB", "TB"]:
             if abs(n) < 1024.0:
@@ -340,11 +360,6 @@ def save_df_for_training(
         except Exception:
             context_sha256 = ""
 
-
-        # ---------- write context schema sidecar (.schema.json) ----------
-        schema_name = os.path.splitext(context_name)[0] + ".schema.json"
-        schema_path = os.path.join(storm_dir, schema_name)
-
         # ---------- write context schema sidecar (.schema.json) ----------
         schema_name = os.path.splitext(context_name)[0] + ".schema.json"
         schema_path = os.path.join(storm_dir, schema_name)
@@ -506,26 +521,16 @@ def save_df_for_training(
                     fillvalue=np.nan,
                 )
 
-                # ---- /data attrs from product schema (plus dynamic units) ----
-                data_spec = (product_schema_base.get("datasets") or {}).get("data", {}) or {}
-                data_attrs = (data_spec.get("attrs") or {}) or {}
+                # Copy *all* YAML-declared attrs for /data (includes unit_source, description, missing_value, etc.)
+                _apply_dataset_attrs(dset, "data")
 
-                dset.attrs["units"] = str(_units)  # dynamic from Py-ART (do not hardcode in schema)
-                mv = data_attrs.get("missing_value", "NaN")
-                dset.attrs["missing_value"] = (np.nan if str(mv).lower() == "nan" else mv)
+                # Now override/normalize the dynamic bits
+                dset.attrs["units"] = str(_units)  # dynamic from Py-ART
 
-                vr = data_attrs.get("valid_range", [-30.0, 95.0])
-                try:
-                    dset.attrs["valid_range"] = np.asarray(vr, dtype="float32")
-                except Exception:
-                    dset.attrs["valid_range"] = np.asarray([-30.0, 95.0], dtype="float32")
-
-                dset.attrs["description"] = str(
-                    data_attrs.get(
-                        "description",
-                        "Radar field tensor with shape (T,H,W,C) = (time, rays, gates, sweeps)."
-                    )
-                )
+                # Normalize missing_value if YAML used "NaN"
+                mv = dset.attrs.get("missing_value", "NaN")
+                if isinstance(mv, (str, bytes)) and str(mv).lower() == "nan":
+                    dset.attrs["missing_value"] = np.nan
 
                 # file-level attrs: dataset + schema identity 
                 h5.attrs["dataset_version"] = str(dataset_version)
@@ -557,15 +562,22 @@ def save_df_for_training(
                 h5.attrs["context_schema_relpath"] = context_schema_relpath
                 h5.attrs["context_sha256"] = str(context_sha256 or "")
 
+                # add which specific schema versions we used 
+                h5.attrs["context_schema_id"] = os.path.basename(context_schema_yaml_path or "")
+                h5.attrs["product_schema_id"] = os.path.basename(product_schema_yaml_path or "")
+
+
                 # time vectors
                 try:
                     times_utf8 = [pd.to_datetime(t).strftime("%Y-%m-%dT%H:%M:%SZ") for t in sub[time_col]]
-                    h5.create_dataset("time", data=np.asarray(times_utf8, dtype="S20"))
+                    time_ds = h5.create_dataset("time", data=np.asarray(times_utf8, dtype="S20"))
+                    _apply_dataset_attrs(time_ds, "time")
                 except Exception:
                     pass
                 try:
                     t_ms = np.array([int(pd.to_datetime(t).value // 1_000_000) for t in sub[time_col]], dtype="int64")
-                    h5.create_dataset("time_unix_ms", data=t_ms)
+                    tms_ds = h5.create_dataset("time_unix_ms", data=t_ms)
+                    _apply_dataset_attrs(tms_ds, "time_unix_ms")
                 except Exception:
                     pass
 
@@ -574,20 +586,27 @@ def save_df_for_training(
                     "azimuth_deg", shape=(T, H), dtype="float32",
                     chunks=(1, H), compression="gzip", compression_opts=4, shuffle=True, fillvalue=np.nan
                 )
+                _apply_dataset_attrs(az_dset, "azimuth_deg") # now we also add hdf-specific attributes, based on the yaml file 
+
                 rng_dset = h5.create_dataset(
                     "range_m", shape=(T, W), dtype="float32",
                     chunks=(1, W), compression="gzip", compression_opts=4, shuffle=True, fillvalue=np.nan
                 )
+                _apply_dataset_attrs(rng_dset, "range_m")
+
                 elv_dset = h5.create_dataset(
                     "elevation_deg", shape=(T, C), dtype="float32",
                     chunks=(1, C), compression="gzip", compression_opts=4, shuffle=True, fillvalue=np.nan
                 )
+                _apply_dataset_attrs(elv_dset, "elevation_deg")
+
                 host_idx_dset = h5.create_dataset(
                     "azimuth_host_sweep_index", shape=(T,), dtype="int16",
                     chunks=True, compression="gzip", compression_opts=4, shuffle=True
                 )
+                _apply_dataset_attrs(host_idx_dset, "azimuth_host_sweep_index")
 
-                # NEW: per-frame bbox datasets
+                # per-frame bbox datasets (should be the same though, because its )
                 def _get_series(name):
                     try:
                         return np.asarray(context_df[name].to_numpy(), dtype=np.float32)
@@ -601,15 +620,23 @@ def save_df_for_training(
                 bbox_min_lon = _get_series("min_lon")
                 bbox_max_lon = _get_series("max_lon")
 
-                h5.create_dataset("bbox_min_lat", data=bbox_min_lat, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
-                h5.create_dataset("bbox_max_lat", data=bbox_max_lat, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
-                h5.create_dataset("bbox_min_lon", data=bbox_min_lon, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
-                h5.create_dataset("bbox_max_lon", data=bbox_max_lon, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
+                bbox_min_lat_dset = h5.create_dataset("bbox_min_lat", data=bbox_min_lat, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
+                _apply_dataset_attrs(bbox_min_lat_dset, "bbox_min_lat")
+
+                bbox_max_lat_dset = h5.create_dataset("bbox_max_lat", data=bbox_max_lat, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
+                _apply_dataset_attrs(bbox_max_lat_dset, "bbox_max_lat")
+
+                bbox_min_lon_dset = h5.create_dataset("bbox_min_lon", data=bbox_min_lon, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
+                _apply_dataset_attrs(bbox_min_lon_dset, "bbox_min_lon")
+
+                bbox_max_lon_dset = h5.create_dataset("bbox_max_lon", data=bbox_max_lon, dtype="float32", chunks=True, compression="gzip", compression_opts=4, shuffle=True)
+                _apply_dataset_attrs(bbox_max_lon_dset, "bbox_max_lon")
 
                 # provenance
                 try:
                     vlen = h5py.special_dtype(vlen=str)
                     srckey_dset = h5.create_dataset("source_key", shape=(T,), dtype=vlen)
+                    _apply_dataset_attrs(srckey_dset, "source_key")
                 except Exception:
                     srckey_dset = None
 
