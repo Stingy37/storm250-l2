@@ -2,14 +2,16 @@
 manifest.csv: Immutable integrity + provenance anchor for each file. 
 catalog.csv:  Event-level (storm) discovery + exploration index.
 """
-
 import os
 import csv
 import json
 import re
 import hashlib
+import logging
 
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_iso(ts):
@@ -67,27 +69,27 @@ def _rel(root, path):
         return os.path.basename(path)
 
 def _debug_preview_csv(path: str, label: str):
-    """Print header + first row, like your context preview style."""
+    """Print header + first row, context preview style."""
     try:
         with open(path, "r", newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
             header = next(reader, None)
-            print(f"\n[catalog] ===== DEBUG: {label} (columns + first row) =====")
-            print(f"[catalog] --- {path} ---")
+            logger.debug(f"\n[catalog] ===== DEBUG: {label} (columns + first row) =====")
+            logger.debug(f"[catalog] --- {path} ---")
             if not header:
-                print("[catalog][warn] empty file or missing header")
+                logger.warning("[catalog][warn] empty file or missing header")
                 return
-            print(f"[catalog] columns={len(header)}")
+            logger.debug(f"[catalog] columns={len(header)}")
             row = next(reader, None)
             if row is None:
-                print("[catalog][warn] no data rows")
+                logger.warning("[catalog][warn] no data rows")
                 for col in header:
-                    print(f"[catalog]   {col}: <NA>")
+                    logger.debug(f"[catalog]   {col}: <NA>")
                 return
             for col, val in zip(header, row):
-                print(f"[catalog]   {col}: {'' if val is None else str(val)}")
+                logger.debug(f"[catalog]   {col}: {'' if val is None else str(val)}")
     except Exception as e:
-        print(f"[catalog][warn] failed preview for {label}: {e}")
+        logger.warning(f"[catalog][warn] failed preview for {label}: {e}")
 
 # ------------------- main builder -------------------
 
@@ -108,7 +110,7 @@ def build_year_manifest_and_catalog(year_dir: str,
     We skip manifest/catalog themselves and any lingering '*.sha256' files.
     """
     if debug:
-        print(f"[catalog] scanning year_dir={year_dir}")
+        logger.debug(f"[catalog] scanning year_dir={year_dir}")
 
     manifest_rows = []
     events = {}  # (site, storm) -> dict
@@ -167,10 +169,10 @@ def build_year_manifest_and_catalog(year_dir: str,
                         with open(schema_path, "w", encoding="utf-8") as f:
                             json.dump(js, f, indent=2, sort_keys=True)
                         if debug:
-                            print(f"[catalog] updated schema checksum: {_rel(year_dir, schema_path)}")
+                            logger.debug(f"[catalog] updated schema checksum: {_rel(year_dir, schema_path)}")
                     except Exception as e:
                         if debug:
-                            print(f"[catalog][warn] failed updating schema for {schema_path}: {e}")
+                            logger.warning(f"[catalog][warn] failed updating schema for {schema_path}: {e}")
             else:
                 # for other files, ALL we need to do is provide a SHA for end users to verify against (not semantic meaning,)
                 # so we can just calculate the SHA here. 
@@ -272,9 +274,9 @@ def build_year_manifest_and_catalog(year_dir: str,
             })
 
     if debug:
-        print(f"[catalog] wrote manifest → {manifest_path}")
-        print(f"[catalog] wrote catalog  → {catalog_path}")
-        print(f"[catalog] events={len(events)}, files={len(manifest_rows)}")
+        logger.debug(f"[catalog] wrote manifest → {manifest_path}")
+        logger.debug(f"[catalog] wrote catalog  → {catalog_path}")
+        logger.debug(f"[catalog] events={len(events)}, files={len(manifest_rows)}")
         _debug_preview_csv(manifest_path, "manifest preview")
         _debug_preview_csv(catalog_path, "catalog preview")
 
