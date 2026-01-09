@@ -1,3 +1,16 @@
+"""
+manifest.csv: Immutable integrity + provenance anchor for each file. 
+catalog.csv:  Event-level (storm) discovery + exploration index.
+"""
+
+import os
+import csv
+import json
+import re
+import hashlib
+
+from datetime import datetime
+
 
 def _utc_iso(ts):
     return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -100,9 +113,10 @@ def build_year_manifest_and_catalog(year_dir: str,
     manifest_rows = []
     events = {}  # (site, storm) -> dict
 
+    # ----------- loop to build manifest.csv + catalog.csv
     for root, dirs, files in os.walk(year_dir):
         for fn in files:
-            # Skip our outputs and old sidecars
+            # Skip outputs  
             if fn == manifest_name or fn == catalog_name or fn.endswith(".sha256"):
                 continue
 
@@ -126,10 +140,21 @@ def build_year_manifest_and_catalog(year_dir: str,
 
             bits = _parse_file_bits(fn) if ftype in ("context_hdf","product_hdf") else {}
 
-            # ---------- SHA (no sidecars) ----------
+            # ---------- build SHA for manifest 
+            # context_hdf -> special case SHA, because this encodes the physical meaning of the dataset. 
+            #                - For each storm, context SHA serves as "ground truth" that semantics stayed the same.
+            #                - If our context hdf changes, then the SHA will change as well. We can compare SHAs to see if anything has changed. 
+            #                - (Ideally) created as soon as the context.h5 is created, so that it truly represents semantic meaning.
+            #                              \- i.e. no differing SHA because corrupted copying, etc. 
             if ftype == "context_hdf":
                 schema_path = os.path.join(root, os.path.splitext(fn)[0] + ".schema.json")
+                #     /- if a SHA already exists in .schema.json, set the manifest.csv's 
+                #     |  corresponding SHA to that. Ensures that the context SHA only encodes semantics. 
                 sha = _read_context_sha_from_schema(schema_path, expected_fname=fn) or _sha256(path)
+
+                # CAREFUL: only use this branch for backfilling missing SHA. 
+                # Otherwise, it can overwrite a good SHA (encoding only semantics) with an SHA that can also encode corruption, since we do it late 
+                # in the pipeline. 
                 if update_schema_checksums and os.path.exists(schema_path):
                     try:
                         with open(schema_path, "r", encoding="utf-8") as f:
@@ -147,10 +172,13 @@ def build_year_manifest_and_catalog(year_dir: str,
                         if debug:
                             print(f"[catalog][warn] failed updating schema for {schema_path}: {e}")
             else:
+                # for other files, ALL we need to do is provide a SHA for end users to verify against (not semantic meaning,)
+                # so we can just calculate the SHA here. 
                 sha = _sha256(path)
 
-            # ---------- manifest row (trimmed) ----------
-            # NOTE: drop T,H,W,C,t0_utc,t1_utc here
+            # ---------- manifest row (trimmed) 
+            # NOTE: drop T,H,W,C,t0_utc,t1_utc here.
+            #         - only keep necessary items for integrity (SHA + info about which storm this file is for). 
             row = {
                 "relpath": rel,
                 "file_type": ftype,
@@ -161,29 +189,33 @@ def build_year_manifest_and_catalog(year_dir: str,
                 "storm_id": bits.get("storm",""),
                 "kind": bits.get("kind",""),
             }
+            # each file gets a row
             manifest_rows.append(row)
 
-            # ---------- event aggregation (catalog) ----------
+            # ---------- build event aggregation (catalog) 
             if ftype in ("context_hdf","product_hdf"):
                 site = bits.get("site")
                 storm = bits.get("storm")
                 if site and storm is not None:
                     key = (site, int(storm))
-                    ev = events.setdefault(key, {
-                        "site": site,
-                        "storm_id": int(storm),
-                        "storm_dir": _rel(year_dir, root),
-                        # we'll keep these in memory to populate t0/t1/T/products/dims,
-                        # but we won't write context_relpath/context_sha256/product_files to CSV
-                        "context_relpath": "",
+                    ev = events.setdefault(key, {           #     |- goal: user friendly, easy way to "know" what the dataset contains 
+                                                            # Questions that each field answers:
+                        "site": site,                       #   - what storm is this
+                        "storm_id": int(storm),             #   ------/
+                        "storm_dir": _rel(year_dir, root),  #   - where is it on disk
+
+                        # Keep these in memory to populate t0/t1/T/products/dims,
+                        # but don't write context_relpath/context_sha256/product_files to CSV (not needed for catalog). 
+                        "context_relpath": "",              
                         "context_sha256": "",
-                        "t0_utc": "",
-                        "t1_utc": "",
-                        "T": "",
-                        "products": [],
+
+                        "t0_utc": "",                       # when did the storm start
+                        "t1_utc": "",                       # when did the storm end 
+                        "T": "",                            # how many frames / timesteps
+                        "products": [],                     # what products exist
                         "product_files": [],
                         "product_dims": [],
-                        "total_bytes": 0,
+                        "total_bytes": 0,                   # total size of the storm
                     })
                     ev["total_bytes"] += size
 
@@ -202,7 +234,7 @@ def build_year_manifest_and_catalog(year_dir: str,
                         if all(bits.get(k) for k in ("H","W","C")):
                             ev["product_dims"].append(f"{prefix}:{bits['H']}x{bits['W']}x{bits['C']}")
 
-    # ---------- write manifest.csv (overwrite; minimal) ----------
+    # ---------- write manifest.csv ----------
     manifest_path = os.path.join(year_dir, manifest_name)
     manifest_fields = [
         "relpath","file_type","size_bytes","sha256","mtime_utc",
@@ -214,7 +246,7 @@ def build_year_manifest_and_catalog(year_dir: str,
         for r in sorted(manifest_rows, key=lambda x: x["relpath"]):
             w.writerow(r)
 
-    # ---------- write catalog.csv (overwrite; trimmed) ----------
+    # ---------- write catalog.csv ----------
     catalog_path = os.path.join(year_dir, catalog_name)
     catalog_fields = [
         "site","storm_id","storm_dir",

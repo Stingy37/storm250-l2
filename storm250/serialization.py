@@ -269,6 +269,11 @@ def save_df_for_training(
         # ---------- write context HDF ----------
         # context HDF -> one per storm ID, contains all (non-radar) metadata per sweep 
         #       - no *_scan (in memory Py-ART radar) or *_cache_volume_path (points to the pickled skeleton for the field *)
+        # 
+        #                   /- i.e. what labels fundamentally mean 
+        # We don't store semantics of the dataset itself inside the hdf's attributes (unlike with tensor products)
+        #    |                                                                               \- these attrs are merely describing the value... doesn't fundamentally change dataset
+        #    \- foundational (context hdf) vs descriptive (product hdf)
         t_meta0 = perf_counter()
         context_df = sub.copy()
         drop_cols = [c for c in context_df.columns if c.endswith("_scan") or c.endswith("_cache_volume_path")]
@@ -347,7 +352,7 @@ def save_df_for_training(
             except Exception:
                 print(f"[save] context write time: {(t_meta1 - t_meta0)*1000:.1f} ms")
 
-        # compute SHA of the just-written context file
+        # compute SHA of the just-written context file so that semantic meaning is encoded. 
         try:
             def _sha256_local(p, chunk=1024*1024):
                 import hashlib
