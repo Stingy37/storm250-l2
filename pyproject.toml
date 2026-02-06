@@ -11,6 +11,9 @@ dependencies = []
 where = ["."]
 
 [tool.pytest.ini_options]
+# decorator for differentiating between unit tests and network tests
 markers = [
     "network: tests that require network access"
 ]
+# disable playwright plugin which is auto-loaded by pytest (needed for tests to work on local computer)
+addopts = "-p no:playwright"

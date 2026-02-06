@@ -137,7 +137,7 @@ def _expand_path(p: PathLike) -> Path:
 # Easy backwards compatibility for colab file-paths (maps to corresponding EBS location)
 def resolve_path(cfg: Mapping[str, Any], p: PathLike) -> Path:
     """
-    Resolve a possibly-relative path under cfg["root_dir"], and returns it. 
+    Resolve a relative path under cfg["root_dir"], and returns the full path for usage later. 
 
     Examples:
       resolve_path(cfg, "Datasets/temp") -> /data/Storm250/Datasets/temp
@@ -145,20 +145,22 @@ def resolve_path(cfg: Mapping[str, Any], p: PathLike) -> Path:
 
     Notes:
     - We treat ANY non-absolute path as relative to root_dir.
-    - This is what allows us to keep Drive-style paths in the YAML and code.
+    - This is what allows us to keep Drive-style paths in the YAML and code 
+        - Essentially, we allow for same file structure across different environments -> very flexible. 
 
-    Returned path points to EBS location.
+    Returned path points to full file location.
     """
     root = _expand_path(cfg.get("root_dir", DEFAULT_CONFIG["root_dir"]))
     path = _expand_path(p)
 
-    # Strip leading "./" to make relative paths cleaner
+    # Strip leading "./" to make relative paths cleaner. We convert ANY non-absolute path to one under root_dir
+    #   ex. "Datasets/temp" -> "<root_dir>/Datasets/temp"
+    #       - this ensures file-structure portability across different environments (EC2, local, etc.)
     if not path.is_absolute():
         rel = Path(str(path)).as_posix()
         if rel.startswith("./"):
             rel = rel[2:]
         return root / rel
-
     return path
 
 
@@ -210,14 +212,13 @@ def validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     # Ensure dirs 
     ensure_dirs = bool(cfg.get("ensure_dirs", True))
+    # Create directory if it doesn't exist and ensure_dirs is true in configs
     if ensure_dirs:
         root.mkdir(parents=True, exist_ok=True)
 
         # Create all configured dirs under cfg["paths"]
         for name, rel in cfg["paths"].items():
             p = resolve_path(cfg, rel)
-            # Most of these are directories. If you later store a file path in paths,
-            # you can add a convention like `*_file` and handle that here.
             p.mkdir(parents=True, exist_ok=True)
 
     return cfg
@@ -250,6 +251,7 @@ def load_config(path: PathLike) -> Dict[str, Any]:
     if not isinstance(user_cfg, dict):
         raise ValueError(f"Config YAML must parse to a dict; got {type(user_cfg)}")
 
+    # update the default config with the supplied config
     cfg = default_config()
     cfg = _deep_update(cfg, user_cfg)
 
