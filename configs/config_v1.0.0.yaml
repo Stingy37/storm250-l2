@@ -13,10 +13,10 @@ dataset:
   name: storm250_level2
   version: "1.0.0"
 
-# EBS mount mirror root (replaces /content/drive/MyDrive/... on Colab)
+# Dataset mount root directorys
 root_dir: "/data/Storm250"
 
-# If true, config.py will mkdir -p root_dir and all directories in paths
+# If true, config.py will mkdir -p root_dir and all directories in paths if the file paths do not exist.
 ensure_dirs: true
 
 paths:
@@ -60,6 +60,21 @@ build:
   reflectivity_dbz_thresh: 20.0
   buffer_km: 5.0
 
+  # Cropping/bbox parameters
+  min_blob_size: 6000
+  grid_resolution_m: 250.0
+  include_nearby_km: 3.0
+  debug_plot_limit: 0
+
+  # Data loading parameters
+  lsr_force_refresh: false
+  grs_base_url: "https://data-osdf.rda.ucar.edu/ncar/rda/d841006/tracks"
+  grs_timeout_s: 10
+  
+  # Product filtering (NEXRAD products to process)
+  nexrad_products:
+    - reflectivity
+
   # Execution knobs
   skip_existing: true
   resume: true
@@ -76,3 +91,12 @@ aws:
 
 logging:
   level: "INFO"
+
+# Execution configuration (runtime parameters)
+execution:
+  year: 2017
+  rewrite_existing: false
+  multiprocessing_method: "fork"
+
+# Radar metadata reference
+radar_info_yaml: "radar_info.yaml"

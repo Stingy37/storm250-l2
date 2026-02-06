@@ -89,6 +89,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "reflectivity_dbz_thresh": 20.0,
         "buffer_km": 5.0,
 
+        # Cropping/bbox parameters
+        "min_blob_size": 6000,
+        "grid_resolution_m": 250.0,
+        "include_nearby_km": 3.0,
+        "debug_plot_limit": 0,
+
+        # Data loading parameters
+        "lsr_force_refresh": False,
+        "grs_base_url": "https://data-osdf.rda.ucar.edu/ncar/rda/d841006/tracks",
+        "grs_timeout_s": 10,
+
+        # Product filtering (NEXRAD products to process)
+        "nexrad_products": ["reflectivity"],
+
         # Resume / skipping behavior (important on long EC2 runs)
         "skip_existing": True,
         "resume": True,
@@ -111,6 +125,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "logging": {
         "level": "INFO",
     },
+
+    # Execution configuration (runtime parameters)
+    "execution": {
+        "year": 2017,
+        "rewrite_existing": False,
+        "multiprocessing_method": "fork",
+    },
+
+    # Radar metadata reference
+    "radar_info_yaml": "radar_info.yaml",
 }
 
 
@@ -179,7 +203,8 @@ def get_path(cfg: Mapping[str, Any], key: str) -> Path:
 
 def validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Validate + normalize config in-place and return it. Makes sure the supplied config can be used. 
+    Validate + normalize config in-place and return it. 
+    Makes sure the supplied config can be used, meaning that all the necessary configs must be provided in the supplied yaml. 
     """
 
     # Root dir
@@ -189,17 +214,17 @@ def validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     root = resolve_path(cfg, ".")  # root itself
     cfg["root_dir"] = str(_expand_path(cfg["root_dir"]))
 
-    # Ensure required top-level sections exist
-    for section in ("paths", "build", "aws", "logging"):
+    # Ensure required top-level sections exist in the configs
+    for section in ("paths", "build", "aws", "logging", "execution"):
         if section not in cfg or not isinstance(cfg[section], dict):
             cfg[section] = deepcopy(DEFAULT_CONFIG[section])
 
-    # Validate numeric knobs (basic sanity)
+    # Validate critical numeric knobs 
     b = cfg["build"]
-    for k in ("max_range_km", "reflectivity_dbz_thresh", "buffer_km"):
+    for k in ("max_range_km", "reflectivity_dbz_thresh", "buffer_km", "grid_resolution_m", "include_nearby_km"):
         if k in b:
             b[k] = float(b[k])
-    for k in ("time_tolerance_s", "min_track_samples", "max_gap_hours", "n_workers"):
+    for k in ("time_tolerance_s", "min_track_samples", "max_gap_hours", "n_workers", "min_blob_size", "debug_plot_limit", "grs_timeout_s"):
         if k in b:
             b[k] = int(b[k])
 
@@ -209,6 +234,19 @@ def validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("build.time_tolerance_s must be >= 0")
     if b["n_workers"] <= 0:
         raise ValueError("build.n_workers must be >= 1")
+
+    # Validate execution section
+    e = cfg["execution"]
+    if "year" in e:
+        e["year"] = int(e["year"])
+        if e["year"] < 1900 or e["year"] > 2100:
+            raise ValueError("execution.year must be a valid year (1900-2100)")
+    if "rewrite_existing" in e:
+        e["rewrite_existing"] = bool(e["rewrite_existing"])
+    if "multiprocessing_method" in e:
+        valid_methods = ["fork", "spawn", "forkserver"]
+        if e["multiprocessing_method"] not in valid_methods:
+            raise ValueError(f"execution.multiprocessing_method must be one of {valid_methods}")
 
     # Ensure dirs 
     ensure_dirs = bool(cfg.get("ensure_dirs", True))
