@@ -3,6 +3,7 @@ import cProfile
 import pstats
 import threading
 import os, gc, ctypes, tempfile
+import logging
 import pandas as pd
 import multiprocessing as mp
 import sys, traceback, faulthandler, warnings
@@ -10,7 +11,6 @@ import queue as _q
 import signal
 
 from threading import Thread
-from IPython.display import display
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -24,13 +24,9 @@ from storm250.obs import load_raw_lsr, load_raw_spc
 from storm250.gridrad import load_grs_tracks
 from storm250.utils import aggressive_memory_cleanup
 
+logger = logging.getLogger(__name__)
+
 faulthandler.enable()
-
-def _showwarn():
-    pass
-
-def log():
-    pass
 
 # Process one SID on a child process after GR-S is linked, to keep RAM usage down
 def _process_one_group(group_pkl_path, cfg_pkl_path, radar_info, debug_flag, sid, errq):
@@ -101,7 +97,8 @@ def _process_one_group(group_pkl_path, cfg_pkl_path, radar_info, debug_flag, sid
     try:
         with open(cfg_pkl_path, 'rb') as f:
             cfg = pickle.load(f)
-        if debug_flag: log(f"[_process_one_group] loaded config from {cfg_pkl_path}")
+        if debug_flag:
+            log(f"[_process_one_group] loaded config from {cfg_pkl_path}")
     except Exception as e:
         log(f"[_process_one_group] ERROR loading config: {e}")
         sys.exit(1)
@@ -352,8 +349,8 @@ def main_pipeline(cfg, radar_info, debug_flag=False):
             force_refresh=cfg["build"]["lsr_force_refresh"],
         )
         if debug_flag:
-            print(f"\n lsr_df shape: {lsr_df.shape} \n")
-            display(lsr_df.head())
+            logger.info(f"\n lsr_df shape: {lsr_df.shape} \n")
+            logger.info(f"lsr_df.head():\n{lsr_df.head()}")
 
 
         # Load spc reports
@@ -364,8 +361,8 @@ def main_pipeline(cfg, radar_info, debug_flag=False):
             debug=False
         )
         if debug_flag:
-            print(f"\n spc_df shape: {spc_df.shape} \n")
-            display(spc_df.head())
+            logger.info(f"\n spc_df shape: {spc_df.shape} \n")
+            logger.info(f"spc_df.head():\n{spc_df.head()}")
 
         ################################################################ LOAD GR-S TRACKS  ###############################################################################
 
@@ -383,8 +380,8 @@ def main_pipeline(cfg, radar_info, debug_flag=False):
             max_gap_hours=cfg["build"]["max_gap_hours"]
         )
         if debug_flag:
-            print(f"\n grs_df shape: {grs_df.shape} \n")
-            display(grs_df.head(2000))
+            logger.info(f"\n grs_df shape: {grs_df.shape} \n")
+            logger.info(f"grs_df.head(2000):\n{grs_df.head(2000)}")
 
         # Link gr-s tracks to radar scan
         grouped = grs_df.groupby("storm_id")
@@ -397,7 +394,7 @@ def main_pipeline(cfg, radar_info, debug_flag=False):
         for sid, group in grouped:
             if debug_flag:
                 site_col = "radar_site"
-                print(f"[main_pipeline] storm_id={sid} with {len(group)} rows; site(s): {group[site_col].unique().tolist()}")
+                logger.info(f"[main_pipeline] storm_id={sid} with {len(group)} rows; site(s): {group[site_col].unique().tolist()}")
 
             # Compute the year for this group (robust)
             try:
@@ -419,7 +416,7 @@ def main_pipeline(cfg, radar_info, debug_flag=False):
                     debug=False)
             except Exception as e:
                 if debug_flag:
-                    print(f"[main_pipeline] SID {sid} child failed: {e}")
+                    logger.info(f"[main_pipeline] SID {sid} child failed: {e}")
                 continue # Skip and move on
 
 
