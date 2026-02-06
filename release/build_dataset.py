@@ -1,5 +1,5 @@
 """
-Dataset builder entry point - loads config and runs pipeline.
+Dataset builder entry point, loads config and runs pipeline.
 """
 import cProfile
 import pstats
@@ -16,7 +16,7 @@ from storm250.build import main_pipeline
 def parse_args():
     """
     Here we add a method to parse arguments supplied by a CLI command entry point, such as 
-    ' python build_dataset.py --config configs/config_v1.0.0.yaml '
+    ' python build_dataset.py --config configs/config_v1.0.0.yaml --profile '
 
     We define the possible arguments and add description / help values for the --help flag. 
     """
@@ -28,7 +28,7 @@ def parse_args():
     p.add_argument("--config", required=True, help="Path to config YAML, where a relative path like 'configs/config_v1.0.0.yaml' is expected")
     #                   /- argument for usage of profiler (not required, default -> not used)
     p.add_argument("--profile", action="store_true", help="Enable cProfile performance profiling")
-    
+
     return p.parse_args()
 
 
