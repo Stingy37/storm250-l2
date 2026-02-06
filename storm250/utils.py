@@ -222,9 +222,7 @@ def aggressive_memory_cleanup(locals_dict: Dict[str, Any]) -> None:
         "linked_radar_df",
         "bboxed_df",
         "files",
-        "full_df",
-        "raw_queue",
-        "plot_thread",
+        "full_df"
     ]
     for name in big_names:
         if name in locals_dict:
